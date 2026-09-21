@@ -13,10 +13,16 @@ interface UseDateRangeOptions {
   defaultPreset?: TimeRangePreset
   /** localStorage key for persisting selection. If omitted, no persistence. */
   storageKey?: string
+  /**
+   * Compute presets as UTC calendar days. Set this for views backed by Meta's
+   * UTC-bucketed analytics; leave it off for our own DB-backed views, where
+   * "today" should mean the viewer's local day.
+   */
+  utc?: boolean
 }
 
 export function useDateRange(options: UseDateRangeOptions = {}) {
-  const { defaultPreset = 'this_month', storageKey } = options
+  const { defaultPreset = 'this_month', storageKey, utc = false } = options
 
   // Load saved state from localStorage if configured
   const loadSaved = (): { range: TimeRangePreset; customRange: any } => {
@@ -49,50 +55,43 @@ export function useDateRange(options: UseDateRangeOptions = {}) {
   const customDateRange = ref<any>(saved.customRange)
   const isDatePickerOpen = ref(false)
 
-  function formatDateLocal(date: Date): string {
-    const year = date.getFullYear()
-    const month = String(date.getMonth() + 1).padStart(2, '0')
-    const day = String(date.getDate()).padStart(2, '0')
-    return `${year}-${month}-${day}`
+  // Formats a civil (timezone-less) Y/M/D as YYYY-MM-DD. Date.UTC is used only
+  // to normalise out-of-range fields (e.g. day - 30); it never shifts the day.
+  function formatDay(year: number, month: number, day: number): string {
+    const d = new Date(Date.UTC(year, month, day))
+    const mm = String(d.getUTCMonth() + 1).padStart(2, '0')
+    const dd = String(d.getUTCDate()).padStart(2, '0')
+    return `${d.getUTCFullYear()}-${mm}-${dd}`
   }
 
   const dateRange = computed<DateRangeResult>(() => {
     const now = new Date()
-    let from: Date
-    let to: Date = now
+    const year = utc ? now.getUTCFullYear() : now.getFullYear()
+    const month = utc ? now.getUTCMonth() : now.getMonth()
+    const day = utc ? now.getUTCDate() : now.getDate()
+    const today = formatDay(year, month, day)
 
     switch (selectedRange.value) {
       case 'today':
-        from = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-        to = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-        break
+        return { from: today, to: today }
       case '7days':
-        from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7)
-        to = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-        break
+        return { from: formatDay(year, month, day - 7), to: today }
       case '30days':
-        from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30)
-        to = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-        break
-      case 'this_month':
-        from = new Date(now.getFullYear(), now.getMonth(), 1)
-        to = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-        break
-      case 'custom':
-        if (customDateRange.value.start && customDateRange.value.end) {
-          from = new Date(customDateRange.value.start.year, customDateRange.value.start.month - 1, customDateRange.value.start.day)
-          to = new Date(customDateRange.value.end.year, customDateRange.value.end.month - 1, customDateRange.value.end.day)
-        } else {
-          from = new Date(now.getFullYear(), now.getMonth(), 1)
-          to = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+        return { from: formatDay(year, month, day - 30), to: today }
+      case 'custom': {
+        const { start, end } = customDateRange.value
+        if (start && end) {
+          return {
+            from: formatDay(start.year, start.month - 1, start.day),
+            to: formatDay(end.year, end.month - 1, end.day),
+          }
         }
-        break
+        return { from: formatDay(year, month, 1), to: today }
+      }
+      case 'this_month':
       default:
-        from = new Date(now.getFullYear(), now.getMonth(), 1)
-        to = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+        return { from: formatDay(year, month, 1), to: today }
     }
-
-    return { from: formatDateLocal(from), to: formatDateLocal(to) }
   })
 
   const formatDateRangeDisplay = computed(() => {

@@ -91,6 +91,20 @@ func (a *App) GetMetaAnalytics(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "End date must be after start date", nil, "")
 	}
 
+	// Clamp the end date to the end of the current UTC day: a future end date
+	// (e.g. from a client-side timezone bug or a stale cached selection) would
+	// otherwise be sent straight to Meta's API, which rejects it and the handler
+	// falls back to returning null data for the account. The clamp target is a
+	// per-day constant rather than time.Now(), so endUnix stays stable across
+	// requests and the analytics cache key below keeps hitting.
+	todayEnd := endOfDay(time.Now().UTC().Truncate(24 * time.Hour))
+	if startDate.After(todayEnd) {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Start date cannot be in the future", nil, "")
+	}
+	if endDate.After(todayEnd) {
+		endDate = todayEnd
+	}
+
 	// Set default granularity (use DAY as standard input, will be normalized per endpoint)
 	if granularity == "" {
 		granularity = "DAY"
@@ -129,9 +143,10 @@ func (a *App) GetMetaAnalytics(r *fastglue.Request) error {
 		}
 	}
 
-	// Convert dates to Unix timestamps
+	// Convert dates to Unix timestamps. endDate already has end-of-day
+	// applied by parseDateRange, so no further adjustment is needed here.
 	startUnix := startDate.Unix()
-	endUnix := endDate.Add(24*time.Hour - time.Second).Unix() // End of day
+	endUnix := endDate.Unix()
 
 	// Get accounts to query
 	var accounts []models.WhatsAppAccount
