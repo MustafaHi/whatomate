@@ -214,6 +214,9 @@ func (m *Manager) runPairing(ctx context.Context, p *pairing, account *models.Wh
 				outbound:  make(map[string]outboundEntry),
 				recvIndex: make(map[string]recvEntry),
 			}
+			// connectStored registers on the restart path; the fresh-pair
+			// path must too, or inbound events are dispatched to nobody.
+			client.AddEventHandler(s.handleEvent)
 			m.mu.Lock()
 			m.sessions[account.ID] = s
 			m.mu.Unlock()
