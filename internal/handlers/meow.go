@@ -60,6 +60,10 @@ func (a *App) HandleMeowInbound(phoneID string, msg whatsmeow.InboundMessage) {
 	}
 
 	switch msg.Type {
+	case "text":
+		itm.Text = &struct {
+			Body string `json:"body"`
+		}{Body: msg.Text}
 	case "image":
 		itm.Image = &struct {
 			ID       string `json:"id"`
@@ -108,7 +112,9 @@ func (a *App) HandleMeowInbound(phoneID string, msg whatsmeow.InboundMessage) {
 		}{Latitude: msg.Lat, Longitude: msg.Long, Name: msg.PlaceName, Address: msg.PlaceAddress}
 	}
 
-	a.processIncomingMessage(phoneID, itm, msg.PushName)
+	// Process in the background like the Meta webhook path — whatsmeow
+	// dispatches events sequentially, and chatbot processing can be slow.
+	go a.processIncomingMessage(phoneID, itm, msg.PushName)
 }
 
 // HandleMeowStatus adapts a whatsmeow receipt into the status pipeline.
