@@ -56,6 +56,9 @@ uploads/
 audio/
 .kilo
 .zcode/
+.claude/
+.agents/
+.skills-lock.json
 
 # Test results
 test-results/

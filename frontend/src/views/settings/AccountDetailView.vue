@@ -150,9 +150,13 @@ function stopPairingPolling() {
 
 async function startPairing() {
   if (!account.value) return
+  if (meowConnected.value === true
+    && !window.confirm(t('accounts.repairConfirm', 'This account is currently connected. Re-pairing will unlink it and you must scan a new QR code. Continue?'))) {
+    return
+  }
   pairingStarting.value = true
   try {
-    await api.post(`/accounts/${account.value.id}/meow/pair/start`)
+    await api.post(`/accounts/${account.value.id}/meow/pair/start`, { force: meowConnected.value === true })
     pairing.value = { status: 'starting' }
     stopPairingPolling()
     pairingTimer = setInterval(pollPairingStatus, 2000)
@@ -173,6 +177,7 @@ async function pollPairingStatus() {
       stopPairingPolling()
       toast.success(t('accounts.pairingPaired', 'Device paired successfully'))
       await loadAccount()
+      loadConnection()
     } else if (data.status === 'timeout' || data.status === 'error') {
       stopPairingPolling()
       toast.error(data.error || t('accounts.pairingTimeout', 'Pairing timed out — try again'))

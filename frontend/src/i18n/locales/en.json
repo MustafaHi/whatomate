@@ -1319,6 +1319,7 @@
     "pairingPaired": "Device paired successfully",
     "pairingTimeout": "Pairing timed out — try again",
     "pairingFailed": "Pairing failed",
+    "repairConfirm": "This account is currently connected. Re-pairing will unlink it and you must scan a new QR code. Continue?",
     "meowSetupStep1": "Save the account with a name",
     "meowSetupStep2": "Click \"Pair device\" and scan the QR code with your phone (WhatsApp → Settings → Linked devices)",
     "meowSetupStep3": "Wait for the Connected badge",

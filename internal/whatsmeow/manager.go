@@ -146,14 +146,24 @@ func (m *Manager) connectStored(account *models.WhatsAppAccount) {
 }
 
 // StartPairing begins a QR pairing for an unpaired (or re-pairing) account.
-func (m *Manager) StartPairing(account *models.WhatsAppAccount) error {
+// With force=true it also tears down a live session; without it, a connected
+// account is refused so an accidental click can't unlink a working number.
+func (m *Manager) StartPairing(account *models.WhatsAppAccount, force bool) error {
+	if !force && m.IsConnected(account) {
+		return fmt.Errorf("account is already connected; re-pairing would unlink it — pass force to confirm")
+	}
+
 	// Fresh session keys: drop any existing device for this account first.
 	m.Forget(account)
 
 	m.mu.Lock()
-	if _, active := m.pairings[account.ID]; active {
-		m.mu.Unlock()
-		return fmt.Errorf("pairing already in progress")
+	if p, exists := m.pairings[account.ID]; exists {
+		if p.status == "starting" || p.status == "qr" {
+			m.mu.Unlock()
+			return fmt.Errorf("pairing already in progress")
+		}
+		// Terminal state (paired/timeout/error) — safe to replace.
+		p.cancel()
 	}
 	pctx, cancel := context.WithCancel(m.ctx)
 	p := &pairing{status: "starting", cancel: cancel}
@@ -330,10 +340,12 @@ func (m *Manager) Forget(account *models.WhatsAppAccount) {
 
 // errSender is the placeholder Sender for whatsmeow accounts without a live
 // session — every operation fails with a clear error.
-type errSender struct{}
+type errSender struct {
+	unsupportedSender
+}
 
 func (errSender) SendTextMessage(_ context.Context, _ *whatsapp.Account, _ whatsapp.Recipient, _ string, _ ...string) (string, error) {
-	return "", fmt.Errorf("%w: account is not paired or connected", whatsapp.ErrUnsupported)
+	return "", errSenderNotPaired()
 }
 
 func (errSender) SendImageMessage(_ context.Context, _ *whatsapp.Account, _ whatsapp.Recipient, _, _ string) (string, error) {
@@ -352,26 +364,6 @@ func (errSender) SendAudioMessage(_ context.Context, _ *whatsapp.Account, _ what
 	return "", errSenderNotPaired()
 }
 
-func (errSender) SendInteractiveButtons(_ context.Context, _ *whatsapp.Account, _ whatsapp.Recipient, _ string, _ []whatsapp.Button) (string, error) {
-	return "", errSenderNotPaired()
-}
-
-func (errSender) SendCTAURLButton(_ context.Context, _ *whatsapp.Account, _ whatsapp.Recipient, _, _, _ string) (string, error) {
-	return "", errSenderNotPaired()
-}
-
-func (errSender) SendTemplateMessage(_ context.Context, _ *whatsapp.Account, _ whatsapp.Recipient, _, _ string, _ []map[string]any) (string, error) {
-	return "", errSenderNotPaired()
-}
-
-func (errSender) SendFlowMessage(_ context.Context, _ *whatsapp.Account, _ whatsapp.Recipient, _, _, _, _, _, _ string) (string, error) {
-	return "", errSenderNotPaired()
-}
-
-func (errSender) SendVoiceCallButton(_ context.Context, _ *whatsapp.Account, _ whatsapp.Recipient, _, _ string, _ int, _ string) (string, error) {
-	return "", errSenderNotPaired()
-}
-
 func (errSender) MarkMessageRead(_ context.Context, _ *whatsapp.Account, _ string) error {
 	return errSenderNotPaired()
 }
@@ -380,22 +372,6 @@ func (errSender) UploadMedia(_ context.Context, _ *whatsapp.Account, _ []byte, _
 	return "", errSenderNotPaired()
 }
 
-func (errSender) GetMediaURL(_ context.Context, _ string, _ *whatsapp.Account) (string, error) {
-	return "", errSenderNotPaired()
-}
-
-func (errSender) DownloadMedia(_ context.Context, _ string, _ string) ([]byte, error) {
-	return nil, errSenderNotPaired()
-}
-
 func errSenderNotPaired() error {
 	return fmt.Errorf("%w: account is not paired or connected — scan the QR code in the account settings", whatsapp.ErrUnsupported)
 }
-
-// Ensure Manager satisfies the handlers-side resolver interface shape.
-var _ interface {
-	SenderFor(account *whatsapp.Account) whatsapp.Sender
-	IsConnected(account *models.WhatsAppAccount) bool
-	Disconnect(account *models.WhatsAppAccount)
-	Forget(account *models.WhatsAppAccount)
-} = (*Manager)(nil)

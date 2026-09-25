@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"strconv"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/shridarpatil/whatomate/internal/models"
@@ -11,11 +10,8 @@ import (
 	"github.com/zerodha/fastglue"
 )
 
-// timestampString formats a time as Unix seconds, matching Meta webhook
-// timestamps.
-func timestampString(t time.Time) string {
-	return strconv.FormatInt(t.Unix(), 10)
-}
+// Compile-time: the whatsmeow manager satisfies the handlers-side resolver.
+var _ MeowResolver = (*whatsmeow.Manager)(nil)
 
 // ============================================================================
 // whatsmeow (QR-linked provider) — inbound funnel + pairing endpoints
@@ -34,7 +30,7 @@ func (a *App) HandleMeowInbound(phoneID string, msg whatsmeow.InboundMessage) {
 	itm := IncomingTextMessage{
 		From:      msg.From,
 		ID:        msg.ID,
-		Timestamp: timestampString(msg.Timestamp),
+		Timestamp: strconv.FormatInt(msg.Timestamp.Unix(), 10),
 		Type:      msg.Type,
 	}
 
@@ -48,11 +44,12 @@ func (a *App) HandleMeowInbound(phoneID string, msg whatsmeow.InboundMessage) {
 	// whatsmeow hands over decrypted media bytes, while the shared extraction
 	// path expects a media ID it can download — so persist the blob now and
 	// stage it under a synthetic ID for DownloadAndSaveMedia to pick up.
+	// saveMediaLocally derives the extension from the mime type.
 	syntheticID := ""
 	if len(msg.MediaData) > 0 {
 		filename := msg.Filename
 		if filename == "" {
-			filename = "media" + mediaExt(msg.MimeType)
+			filename = "media"
 		}
 		if localPath, err := a.saveMediaLocally(msg.MediaData, msg.MimeType, filename); err == nil {
 			syntheticID = "meow:" + uuid.New().String()
@@ -114,37 +111,6 @@ func (a *App) HandleMeowInbound(phoneID string, msg whatsmeow.InboundMessage) {
 	a.processIncomingMessage(phoneID, itm, msg.PushName)
 }
 
-// mediaExt picks a file extension from a mime type.
-func mediaExt(mimeType string) string {
-	switch mimeType {
-	case "image/jpeg":
-		return ".jpg"
-	case "image/png":
-		return ".png"
-	case "image/webp":
-		return ".webp"
-	case "image/gif":
-		return ".gif"
-	case "video/mp4":
-		return ".mp4"
-	case "video/3gpp":
-		return ".3gp"
-	case "audio/aac":
-		return ".aac"
-	case "audio/mp4":
-		return ".m4a"
-	case "audio/ogg":
-		return ".ogg"
-	case "application/pdf":
-		return ".pdf"
-	default:
-		if len(mimeType) > 6 && mimeType[:6] == "image/" {
-			return "." + mimeType[6:]
-		}
-		return ""
-	}
-}
-
 // HandleMeowStatus adapts a whatsmeow receipt into the status pipeline.
 func (a *App) HandleMeowStatus(phoneID string, st whatsmeow.StatusUpdate) {
 	a.processStatusUpdate(phoneID, WebhookStatus{ID: st.MessageID, Status: st.Status})
@@ -170,7 +136,15 @@ func (a *App) MeowPairStart(r *fastglue.Request) error {
 	if a.Meow == nil {
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "whatsmeow support unavailable", nil, "")
 	}
-	if err := a.Meow.StartPairing(account); err != nil {
+
+	var req struct {
+		Force bool `json:"force"` // required to re-pair a currently-connected account
+	}
+	_ = r.Decode(&req, "json")
+
+	// Re-pairing changes the number — drop any cached copy of the old one.
+	a.InvalidateWhatsAppAccountCache(account.PhoneID)
+	if err := a.Meow.StartPairing(account, req.Force); err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
 	}
 	return r.SendEnvelope(map[string]string{"status": "starting"})

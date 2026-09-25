@@ -63,7 +63,7 @@ type MeowResolver interface {
 	Disconnect(account *models.WhatsAppAccount)
 	// OnDelete persists nothing but forgets the account's session state.
 	Forget(account *models.WhatsAppAccount)
-	StartPairing(account *models.WhatsAppAccount) error
+	StartPairing(account *models.WhatsAppAccount, force bool) error
 	PairingStatus(accountID uuid.UUID) (status, qrPNG, errMsg string)
 }
 

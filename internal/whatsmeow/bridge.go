@@ -27,6 +27,8 @@ const recvIndexMax = 1000
 // session is one connected WhatsApp multidevice session. It implements
 // whatsapp.Sender over the whatsmeow client.
 type session struct {
+	unsupportedSender
+
 	mgr       *Manager
 	accountID uuid.UUID
 	phoneID   string // own phone number digits
@@ -53,7 +55,15 @@ type recvEntry struct {
 }
 
 // handleEvent is the whatsmeow event handler. Registered before Connect.
+// whatsmeow dispatches events on its own websocket goroutine — a panic here
+// would take down the whole process, so recover and log instead.
 func (s *session) handleEvent(evt any) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.mgr.Log.Error("panic recovered in whatsmeow event handler", "panic", r, "account_id", s.accountID)
+		}
+	}()
+
 	switch e := evt.(type) {
 	case *events.Message:
 		s.handleInbound(e)
@@ -136,6 +146,42 @@ func mediaPart(msg *waE2E.Message) wa.DownloadableMessage {
 // ============================================================================
 // whatsapp.Sender implementation
 // ============================================================================
+
+// unsupportedSender implements the whatsapp.Sender methods no whatsmeow
+// session can perform (Meta-only features and Meta-specific media URLs).
+// Both the live session and errSender embed it.
+type unsupportedSender struct{}
+
+func (unsupportedSender) SendInteractiveButtons(_ context.Context, _ *whatsapp.Account, _ whatsapp.Recipient, _ string, _ []whatsapp.Button) (string, error) {
+	return "", whatsapp.ErrUnsupported
+}
+
+func (unsupportedSender) SendCTAURLButton(_ context.Context, _ *whatsapp.Account, _ whatsapp.Recipient, _, _, _ string) (string, error) {
+	return "", whatsapp.ErrUnsupported
+}
+
+func (unsupportedSender) SendTemplateMessage(_ context.Context, _ *whatsapp.Account, _ whatsapp.Recipient, _, _ string, _ []map[string]any) (string, error) {
+	return "", whatsapp.ErrUnsupported
+}
+
+func (unsupportedSender) SendFlowMessage(_ context.Context, _ *whatsapp.Account, _ whatsapp.Recipient, _, _, _, _, _, _ string) (string, error) {
+	return "", whatsapp.ErrUnsupported
+}
+
+func (unsupportedSender) SendVoiceCallButton(_ context.Context, _ *whatsapp.Account, _ whatsapp.Recipient, _, _ string, _ int, _ string) (string, error) {
+	return "", whatsapp.ErrUnsupported
+}
+
+// GetMediaURL/DownloadMedia are unreachable for whatsmeow accounts: inbound
+// media is staged locally by the inbound adapter, so DownloadAndSaveMedia
+// never falls through to them.
+func (unsupportedSender) GetMediaURL(_ context.Context, _ string, _ *whatsapp.Account) (string, error) {
+	return "", whatsapp.ErrUnsupported
+}
+
+func (unsupportedSender) DownloadMedia(_ context.Context, _ string, _ string) ([]byte, error) {
+	return nil, whatsapp.ErrUnsupported
+}
 
 func (s *session) SendTextMessage(ctx context.Context, account *whatsapp.Account, rcpt whatsapp.Recipient, text string, replyToMsgID ...string) (string, error) {
 	to, err := s.recipientJID(rcpt)
@@ -291,36 +337,6 @@ func (s *session) MarkMessageRead(ctx context.Context, account *whatsapp.Account
 		return nil
 	}
 	return s.client.MarkRead(ctx, []types.MessageID{types.MessageID(messageID)}, time.Now(), ref.chat, ref.sender)
-}
-
-func (s *session) GetMediaURL(_ context.Context, mediaID string, account *whatsapp.Account) (string, error) {
-	// Inbound whatsmeow media is staged locally by the inbound adapter, so
-	// DownloadAndSaveMedia never reaches here.
-	return "", whatsapp.ErrUnsupported
-}
-
-func (s *session) DownloadMedia(_ context.Context, mediaURL string, accessToken string) ([]byte, error) {
-	return nil, whatsapp.ErrUnsupported
-}
-
-func (s *session) SendInteractiveButtons(_ context.Context, account *whatsapp.Account, rcpt whatsapp.Recipient, bodyText string, buttons []whatsapp.Button) (string, error) {
-	return "", whatsapp.ErrUnsupported
-}
-
-func (s *session) SendCTAURLButton(_ context.Context, account *whatsapp.Account, rcpt whatsapp.Recipient, bodyText, buttonText, url string) (string, error) {
-	return "", whatsapp.ErrUnsupported
-}
-
-func (s *session) SendTemplateMessage(_ context.Context, account *whatsapp.Account, rcpt whatsapp.Recipient, templateName, languageCode string, components []map[string]any) (string, error) {
-	return "", whatsapp.ErrUnsupported
-}
-
-func (s *session) SendFlowMessage(_ context.Context, account *whatsapp.Account, rcpt whatsapp.Recipient, flowID, headerText, bodyText, ctaText, flowToken, firstScreen string) (string, error) {
-	return "", whatsapp.ErrUnsupported
-}
-
-func (s *session) SendVoiceCallButton(_ context.Context, account *whatsapp.Account, rcpt whatsapp.Recipient, bodyText, displayText string, ttlMinutes int, payload string) (string, error) {
-	return "", whatsapp.ErrUnsupported
 }
 
 // recipientJID converts a Recipient to a user JID. BSUID-only recipients
