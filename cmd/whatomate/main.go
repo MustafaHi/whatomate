@@ -22,6 +22,7 @@ import (
 	"github.com/shridarpatil/whatomate/internal/storage"
 	"github.com/shridarpatil/whatomate/internal/tts"
 	"github.com/shridarpatil/whatomate/internal/websocket"
+	"github.com/shridarpatil/whatomate/internal/whatsmeow"
 	"github.com/shridarpatil/whatomate/internal/worker"
 	"github.com/shridarpatil/whatomate/pkg/whatsapp"
 	"github.com/valyala/fasthttp"
@@ -209,6 +210,22 @@ func runServer(args []string) {
 		HTTPClient: httpClient,
 	}
 
+	// Initialize whatsmeow (QR-linked) session manager
+	appCtx, appCancel := context.WithCancel(context.Background())
+	defer appCancel()
+	meowMgr, err := whatsmeow.New(appCtx, db, lo)
+	if err != nil {
+		lo.Fatal("Failed to create whatsmeow manager", "error", err)
+	}
+	app.Meow = meowMgr
+	meowMgr.SetHandlers(app.HandleMeowInbound, app.HandleMeowStatus)
+	go func() {
+		if err := meowMgr.Start(); err != nil {
+			lo.Error("whatsmeow manager failed to start", "error", err)
+		}
+	}()
+	lo.Info("whatsmeow manager started")
+
 	// Initialize S3 client for call recordings (optional)
 	var s3Client *storage.S3Client
 	if cfg.Calling.RecordingEnabled && cfg.Storage.S3Bucket != "" {
@@ -294,6 +311,8 @@ func runServer(args []string) {
 			if err != nil {
 				lo.Fatal("Failed to create worker", "error", err, "worker_num", i+1)
 			}
+			// Campaign sends must honor the account's provider (whatsmeow etc.)
+			w.SenderFor = app.SenderForWAAccount
 			workers = append(workers, w)
 
 			workerNum := i + 1
@@ -315,6 +334,11 @@ func runServer(args []string) {
 	<-quit
 
 	lo.Info("Shutting down...")
+
+	// Stop whatsmeow sessions
+	lo.Info("Stopping whatsmeow sessions...")
+	meowMgr.Stop()
+	lo.Info("whatsmeow sessions stopped")
 
 	// Stop campaign stats subscriber
 	lo.Info("Stopping campaign stats subscriber...")
@@ -617,6 +641,10 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 	g.POST("/api/accounts/{id}/register", app.RegisterPhoneNumber) // Embedded signup manual/2fa registration
 	g.POST("/api/accounts/{id}/test", app.TestAccountConnection)
 	g.POST("/api/accounts/{id}/subscribe", app.SubscribeApp)
+	// whatsmeow (QR-linked) provider
+	g.POST("/api/accounts/{id}/meow/pair/start", app.MeowPairStart)
+	g.GET("/api/accounts/{id}/meow/pair/status", app.MeowPairStatus)
+	g.GET("/api/accounts/{id}/meow/connection", app.MeowConnection)
 	g.GET("/api/accounts/{id}/business_profile", app.GetBusinessProfile)
 	g.PUT("/api/accounts/{id}/business_profile", app.UpdateBusinessProfile)
 	g.POST("/api/accounts/{id}/business_profile/photo", app.UpdateProfilePicture)

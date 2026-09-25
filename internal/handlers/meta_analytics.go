@@ -172,6 +172,21 @@ func (a *App) GetMetaAnalytics(r *fastglue.Request) error {
 		})
 	}
 
+	// Analytics is a Meta-only feature — drop accounts on other providers.
+	metaAccounts := accounts[:0]
+	for _, acct := range accounts {
+		if acct.Provider == "" || acct.Provider == whatsapp.ProviderMeta {
+			metaAccounts = append(metaAccounts, acct)
+		}
+	}
+	accounts = metaAccounts
+	if len(accounts) == 0 {
+		return r.SendEnvelope(map[string]any{
+			"accounts": []MetaAnalyticsResponse{},
+			"message":  "No Meta Cloud API accounts found",
+		})
+	}
+
 	// Build cache key
 	cacheKey := a.buildMetaAnalyticsCacheKey(orgID, accountID, analyticsType, startUnix, endUnix, granularity)
 

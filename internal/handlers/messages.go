@@ -157,6 +157,7 @@ func (a *App) SendOutgoingMessage(ctx context.Context, req OutgoingMessageReques
 	// 2. Define the send function based on message type
 	sendFn := func(sendCtx context.Context) (string, error) {
 		waAccount := a.toWhatsAppAccount(req.Account)
+		sender := a.senderFor(waAccount)
 		rcpt := whatsapp.Recipient{Phone: req.Contact.PhoneNumber, BSUID: req.Contact.BSUID}
 
 		// Get reply-to message ID if this is a reply
@@ -167,14 +168,14 @@ func (a *App) SendOutgoingMessage(ctx context.Context, req OutgoingMessageReques
 
 		switch req.Type {
 		case models.MessageTypeText:
-			return a.WhatsApp.SendTextMessage(sendCtx, waAccount, rcpt, req.Content, replyToMsgID)
+			return sender.SendTextMessage(sendCtx, waAccount, rcpt, req.Content, replyToMsgID)
 
 		case models.MessageTypeImage, models.MessageTypeVideo, models.MessageTypeAudio, models.MessageTypeDocument:
 			// Upload media if MediaData is provided and MediaID is not set
 			mediaID := req.MediaID
 			if mediaID == "" && len(req.MediaData) > 0 {
 				var err error
-				mediaID, err = a.WhatsApp.UploadMedia(sendCtx, waAccount, req.MediaData, req.MediaMimeType, req.MediaFilename)
+				mediaID, err = sender.UploadMedia(sendCtx, waAccount, req.MediaData, req.MediaMimeType, req.MediaFilename)
 				if err != nil {
 					return "", fmt.Errorf("failed to upload media: %w", err)
 				}
@@ -182,23 +183,23 @@ func (a *App) SendOutgoingMessage(ctx context.Context, req OutgoingMessageReques
 			// Send the appropriate media type
 			switch req.Type {
 			case models.MessageTypeImage:
-				return a.WhatsApp.SendImageMessage(sendCtx, waAccount, rcpt, mediaID, req.Caption)
+				return sender.SendImageMessage(sendCtx, waAccount, rcpt, mediaID, req.Caption)
 			case models.MessageTypeVideo:
-				return a.WhatsApp.SendVideoMessage(sendCtx, waAccount, rcpt, mediaID, req.Caption)
+				return sender.SendVideoMessage(sendCtx, waAccount, rcpt, mediaID, req.Caption)
 			case models.MessageTypeAudio:
-				return a.WhatsApp.SendAudioMessage(sendCtx, waAccount, rcpt, mediaID)
+				return sender.SendAudioMessage(sendCtx, waAccount, rcpt, mediaID)
 			default: // document
-				return a.WhatsApp.SendDocumentMessage(sendCtx, waAccount, rcpt, mediaID, req.MediaFilename, req.Caption)
+				return sender.SendDocumentMessage(sendCtx, waAccount, rcpt, mediaID, req.MediaFilename, req.Caption)
 			}
 
 		case models.MessageTypeInteractive:
 			switch req.InteractiveType {
 			case "cta_url":
-				return a.WhatsApp.SendCTAURLButton(sendCtx, waAccount, rcpt, req.BodyText, req.ButtonText, req.URL)
+				return sender.SendCTAURLButton(sendCtx, waAccount, rcpt, req.BodyText, req.ButtonText, req.URL)
 			case "voice_call":
-				return a.WhatsApp.SendVoiceCallButton(sendCtx, waAccount, rcpt, req.BodyText, req.DisplayText, req.TTLMinutes, req.VoiceCallPayload)
+				return sender.SendVoiceCallButton(sendCtx, waAccount, rcpt, req.BodyText, req.DisplayText, req.TTLMinutes, req.VoiceCallPayload)
 			default: // "button" or "list"
-				return a.WhatsApp.SendInteractiveButtons(sendCtx, waAccount, rcpt, req.BodyText, req.Buttons)
+				return sender.SendInteractiveButtons(sendCtx, waAccount, rcpt, req.BodyText, req.Buttons)
 			}
 
 		case models.MessageTypeTemplate:
@@ -220,13 +221,13 @@ func (a *App) SendOutgoingMessage(ctx context.Context, req OutgoingMessageReques
 			// Add URL/COPY_CODE button components with dynamic params
 			buttonComponents := whatsapp.ButtonURLParamsToComponents(req.ButtonURLParams, req.Template.Buttons)
 			components = append(components, buttonComponents...)
-			return a.WhatsApp.SendTemplateMessage(sendCtx, waAccount, rcpt, req.Template.Name, req.Template.Language, components)
+			return sender.SendTemplateMessage(sendCtx, waAccount, rcpt, req.Template.Name, req.Template.Language, components)
 
 		case models.MessageTypeFlow:
 			if req.FlowID == "" {
 				return "", fmt.Errorf("flow ID is required for flow messages")
 			}
-			return a.WhatsApp.SendFlowMessage(sendCtx, waAccount, rcpt, req.FlowID, req.FlowHeader, req.BodyText, req.FlowCTA, req.FlowToken, req.FlowFirstScreen)
+			return sender.SendFlowMessage(sendCtx, waAccount, rcpt, req.FlowID, req.FlowHeader, req.BodyText, req.FlowCTA, req.FlowToken, req.FlowFirstScreen)
 
 		default:
 			return "", fmt.Errorf("unsupported message type: %s", req.Type)
@@ -894,7 +895,7 @@ func (a *App) SendTemplateMessage(r *fastglue.Request) error {
 		// Upload to WhatsApp if we have raw data (options 2 & 3)
 		if len(headerMediaData) > 0 {
 			waAcct := a.toWhatsAppAccount(account)
-			mediaID, err := a.WhatsApp.UploadMedia(context.Background(), waAcct, headerMediaData, headerMimeType, "header")
+			mediaID, err := a.senderFor(waAcct).UploadMedia(context.Background(), waAcct, headerMediaData, headerMimeType, "header")
 			if err != nil {
 				a.Log.Error("Failed to upload template header media", "error", err)
 				return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to upload header media to WhatsApp", nil, "")

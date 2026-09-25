@@ -277,6 +277,9 @@ func (a *App) SaveFlowToMeta(r *fastglue.Request) error {
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "WhatsApp account not found", nil, "")
 	}
+	if err := a.requireMetaAccount(r, account); err != nil {
+		return nil
+	}
 
 	// Create WhatsApp API client
 	waClient := whatsapp.New(a.Log)
@@ -389,6 +392,9 @@ func (a *App) PublishFlow(r *fastglue.Request) error {
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "WhatsApp account not found", nil, "")
 	}
+	if err := a.requireMetaAccount(r, account); err != nil {
+		return nil
+	}
 
 	// Create WhatsApp API client
 	waClient := whatsapp.New(a.Log)
@@ -457,6 +463,9 @@ func (a *App) DeprecateFlow(r *fastglue.Request) error {
 		account, err := a.resolveWhatsAppAccount(orgID, flow.WhatsAppAccount)
 		if err != nil {
 			return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "WhatsApp account not found", nil, "")
+		}
+		if err := a.requireMetaAccount(r, account); err != nil {
+			return nil
 		}
 
 		waClient := whatsapp.New(a.Log)

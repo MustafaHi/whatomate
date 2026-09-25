@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
@@ -20,6 +20,13 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Separator } from '@/components/ui/separator'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { IconButton } from '@/components/shared'
 import {
   AlertDialog,
@@ -45,11 +52,13 @@ import {
   TestTube2,
   Check,
   X,
+  QrCode,
 } from 'lucide-vue-next'
 
 interface WhatsAppAccount {
   id: string
   name: string
+  provider: string
   app_id: string
   phone_id: string
   business_id: string
@@ -110,6 +119,7 @@ const canDelete = computed(() => authStore.hasPermission('accounts', 'delete'))
 
 const form = ref({
   name: '',
+  provider: 'meta',
   app_id: '',
   phone_id: '',
   business_id: '',
@@ -122,6 +132,65 @@ const form = ref({
   auto_read_receipt: false,
   business_calling_enabled: false,
 })
+
+const isMeow = computed(() => form.value.provider === 'whatsmeow')
+
+// whatsmeow pairing state
+const pairing = ref<{ status: string; qr_png?: string; error?: string } | null>(null)
+const pairingStarting = ref(false)
+const meowConnected = ref<boolean | null>(null)
+let pairingTimer: ReturnType<typeof setInterval> | null = null
+
+function stopPairingPolling() {
+  if (pairingTimer !== null) {
+    clearInterval(pairingTimer)
+    pairingTimer = null
+  }
+}
+
+async function startPairing() {
+  if (!account.value) return
+  pairingStarting.value = true
+  try {
+    await api.post(`/accounts/${account.value.id}/meow/pair/start`)
+    pairing.value = { status: 'starting' }
+    stopPairingPolling()
+    pairingTimer = setInterval(pollPairingStatus, 2000)
+  } catch (e) {
+    toast.error(getErrorMessage(e, t('accounts.pairingFailed', 'Pairing failed')))
+  } finally {
+    pairingStarting.value = false
+  }
+}
+
+async function pollPairingStatus() {
+  if (!account.value) return
+  try {
+    const response = await api.get(`/accounts/${account.value.id}/meow/pair/status`)
+    const data = response.data.data || response.data
+    pairing.value = data
+    if (data.status === 'paired') {
+      stopPairingPolling()
+      toast.success(t('accounts.pairingPaired', 'Device paired successfully'))
+      await loadAccount()
+    } else if (data.status === 'timeout' || data.status === 'error') {
+      stopPairingPolling()
+      toast.error(data.error || t('accounts.pairingTimeout', 'Pairing timed out — try again'))
+    }
+  } catch {
+    // transient poll errors are ignored; the interval keeps trying
+  }
+}
+
+async function loadConnection() {
+  if (!account.value || isNew.value) return
+  try {
+    const response = await api.get(`/accounts/${account.value.id}/meow/connection`)
+    meowConnected.value = (response.data.data || response.data).connected
+  } catch {
+    meowConnected.value = null
+  }
+}
 
 const breadcrumbs = computed(() => [
   { label: t('nav.settings'), href: '/settings' },
@@ -155,6 +224,7 @@ function syncForm() {
   if (!account.value) return
   form.value = {
     name: account.value.name,
+    provider: account.value.provider || 'meta',
     app_id: account.value.app_id || '',
     phone_id: account.value.phone_id,
     business_id: account.value.business_id,
@@ -170,13 +240,19 @@ function syncForm() {
 }
 
 async function save() {
-  if (!form.value.name.trim() || !form.value.phone_id.trim() || !form.value.business_id.trim()) {
-    toast.error(t('accounts.fillRequired', 'Name, Phone ID, and Business ID are required'))
+  if (!form.value.name.trim()) {
+    toast.error(t('accounts.nameRequired', 'Name is required'))
     return
   }
-  if (isNew.value && !form.value.access_token.trim()) {
-    toast.error(t('accounts.accessTokenRequired', 'Access token is required'))
-    return
+  if (!isMeow.value) {
+    if (!form.value.phone_id.trim() || !form.value.business_id.trim()) {
+      toast.error(t('accounts.fillRequired', 'Name, Phone ID, and Business ID are required'))
+      return
+    }
+    if (isNew.value && !form.value.access_token.trim()) {
+      toast.error(t('accounts.accessTokenRequired', 'Access token is required'))
+      return
+    }
   }
 
   isSaving.value = true
@@ -267,8 +343,13 @@ onMounted(async () => {
     hasChanges.value = false
   } else {
     await loadAccount()
+    if (form.value.provider === 'whatsmeow') {
+      loadConnection()
+    }
   }
 })
+
+onUnmounted(stopPairingPolling)
 </script>
 
 <template>
@@ -289,12 +370,12 @@ onMounted(async () => {
           <RefreshCw v-else class="h-4 w-4 mr-1" />
           {{ $t('accounts.test', 'Test') }}
         </Button>
-        <Button v-if="!isNew && account" variant="outline" size="sm" :disabled="subscribing" @click="subscribeApp">
+        <Button v-if="!isNew && account && !isMeow" variant="outline" size="sm" :disabled="subscribing" @click="subscribeApp">
           <Loader2 v-if="subscribing" class="h-4 w-4 animate-spin mr-1" />
           <Bell v-else class="h-4 w-4 mr-1" />
           {{ $t('accounts.subscribe', 'Subscribe') }}
         </Button>
-        <Button v-if="!isNew && account" variant="outline" size="sm" @click="isProfileDialogOpen = true">
+        <Button v-if="!isNew && account && !isMeow" variant="outline" size="sm" @click="isProfileDialogOpen = true">
           <Store class="h-4 w-4 mr-1" />
           {{ $t('accounts.businessProfile', 'Profile') }}
         </Button>
@@ -381,52 +462,110 @@ onMounted(async () => {
           <Input v-model="form.name" :disabled="!canWrite" />
         </div>
 
-        <Separator />
-
-        <div class="grid grid-cols-2 gap-4">
-          <div class="space-y-1.5">
-            <Label class="text-xs">{{ $t('accounts.metaAppId', 'Meta App ID') }}</Label>
-            <Input v-model="form.app_id" :disabled="!canWrite" />
-          </div>
-          <div class="space-y-1.5">
-            <Label class="text-xs">{{ $t('accounts.phoneNumberId', 'Phone Number ID') }} *</Label>
-            <Input v-model="form.phone_id" :disabled="!canWrite" />
-          </div>
-          <div class="space-y-1.5">
-            <Label class="text-xs">{{ $t('accounts.businessAccountId', 'Business Account ID') }} *</Label>
-            <Input v-model="form.business_id" :disabled="!canWrite" />
-          </div>
-          <div class="space-y-1.5">
-            <Label class="text-xs">{{ $t('accounts.apiVersion', 'API Version') }}</Label>
-            <Input v-model="form.api_version" :disabled="!canWrite" />
-          </div>
+        <div class="space-y-1.5">
+          <Label class="text-xs">{{ $t('accounts.provider', 'Provider') }}</Label>
+          <Select v-model="form.provider" :disabled="!isNew || !canWrite">
+            <SelectTrigger class="w-full">
+              <SelectValue :placeholder="$t('accounts.provider', 'Provider')" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="meta">{{ $t('accounts.providerMeta', 'Meta Cloud API') }}</SelectItem>
+              <SelectItem value="whatsmeow">{{ $t('accounts.providerWhatsmeow', 'WhatsApp QR (unofficial)') }}</SelectItem>
+            </SelectContent>
+          </Select>
+          <p v-if="!isNew" class="text-[11px] text-muted-foreground">
+            {{ $t('accounts.providerLocked', 'Provider cannot be changed after creation. Create a new account to switch.') }}
+          </p>
+          <p v-else-if="isMeow" class="text-[11px] text-amber-500 flex items-start gap-1.5">
+            <AlertCircle class="h-3.5 w-3.5 mt-px shrink-0" />
+            {{ $t('accounts.whatsmeowWarning', 'Unofficial connection: linking WhatsApp this way may lead to your number being banned. Use at your own risk.') }}
+          </p>
         </div>
 
-        <Separator />
+        <template v-if="!isMeow">
+          <Separator />
 
-        <div class="grid grid-cols-2 gap-4">
-          <div class="space-y-1.5">
-            <Label class="text-xs">
-              {{ $t('accounts.accessToken', 'Access Token') }}
-              <span v-if="isNew" class="text-destructive">*</span>
-              <span v-else class="text-muted-foreground text-[10px]">{{ $t('accounts.accessTokenKeepExisting', '(leave empty to keep existing)') }}</span>
-            </Label>
-            <Input v-model="form.access_token" type="password" :disabled="!canWrite" />
-            <Badge v-if="account?.has_access_token" variant="outline" class="border-green-600 text-green-600">
-              <Check class="h-3 w-3 mr-1" /> {{ $t('accounts.configured', 'Configured') }}
-            </Badge>
+          <div class="grid grid-cols-2 gap-4">
+            <div class="space-y-1.5">
+              <Label class="text-xs">{{ $t('accounts.metaAppId', 'Meta App ID') }}</Label>
+              <Input v-model="form.app_id" :disabled="!canWrite" />
+            </div>
+            <div class="space-y-1.5">
+              <Label class="text-xs">{{ $t('accounts.phoneNumberId', 'Phone Number ID') }} *</Label>
+              <Input v-model="form.phone_id" :disabled="!canWrite" />
+            </div>
+            <div class="space-y-1.5">
+              <Label class="text-xs">{{ $t('accounts.businessAccountId', 'Business Account ID') }} *</Label>
+              <Input v-model="form.business_id" :disabled="!canWrite" />
+            </div>
+            <div class="space-y-1.5">
+              <Label class="text-xs">{{ $t('accounts.apiVersion', 'API Version') }}</Label>
+              <Input v-model="form.api_version" :disabled="!canWrite" />
+            </div>
           </div>
-          <div class="space-y-1.5">
-            <Label class="text-xs">
-              {{ $t('accounts.appSecret', 'App Secret') }}
-              <span v-if="!isNew" class="text-muted-foreground text-[10px]">{{ $t('accounts.accessTokenKeepExisting', '(leave empty to keep existing)') }}</span>
-            </Label>
-            <Input v-model="form.app_secret" type="password" :disabled="!canWrite" />
-            <Badge v-if="account?.has_app_secret" variant="outline" class="border-green-600 text-green-600">
-              <Check class="h-3 w-3 mr-1" /> {{ $t('accounts.configured', 'Configured') }}
-            </Badge>
+
+          <Separator />
+
+          <div class="grid grid-cols-2 gap-4">
+            <div class="space-y-1.5">
+              <Label class="text-xs">
+                {{ $t('accounts.accessToken', 'Access Token') }}
+                <span v-if="isNew" class="text-destructive">*</span>
+                <span v-else class="text-muted-foreground text-[10px]">{{ $t('accounts.accessTokenKeepExisting', '(leave empty to keep existing)') }}</span>
+              </Label>
+              <Input v-model="form.access_token" type="password" :disabled="!canWrite" />
+              <Badge v-if="account?.has_access_token" variant="outline" class="border-green-600 text-green-600">
+                <Check class="h-3 w-3 mr-1" /> {{ $t('accounts.configured', 'Configured') }}
+              </Badge>
+            </div>
+            <div class="space-y-1.5">
+              <Label class="text-xs">
+                {{ $t('accounts.appSecret', 'App Secret') }}
+                <span v-if="!isNew" class="text-muted-foreground text-[10px]">{{ $t('accounts.accessTokenKeepExisting', '(leave empty to keep existing)') }}</span>
+              </Label>
+              <Input v-model="form.app_secret" type="password" :disabled="!canWrite" />
+              <Badge v-if="account?.has_app_secret" variant="outline" class="border-green-600 text-green-600">
+                <Check class="h-3 w-3 mr-1" /> {{ $t('accounts.configured', 'Configured') }}
+              </Badge>
+            </div>
           </div>
-        </div>
+        </template>
+
+        <template v-else>
+          <Separator />
+          <div class="space-y-3">
+            <div class="flex items-center justify-between">
+              <Label class="text-xs">{{ $t('accounts.connectionStatus', 'Connection') }}</Label>
+              <Badge v-if="meowConnected !== null" :variant="meowConnected ? 'default' : 'secondary'"
+                :class="meowConnected ? 'border-green-600 text-green-600' : ''">
+                {{ meowConnected ? $t('accounts.whatsmeowConnected', 'Connected') : $t('accounts.whatsmeowDisconnected', 'Disconnected') }}
+              </Badge>
+            </div>
+
+            <div v-if="isNew" class="text-sm text-muted-foreground">
+              {{ $t('accounts.pairingAfterSave', 'Save this account first — the pairing QR code appears here afterwards.') }}
+            </div>
+
+            <template v-else>
+              <p class="text-[11px] text-muted-foreground">
+                {{ $t('accounts.pairingDesc', 'Link this account by scanning the QR code with your phone: WhatsApp → Settings → Linked devices.') }}
+              </p>
+
+              <div v-if="pairing?.qr_png" class="flex flex-col items-center gap-2 rounded-lg border border-border/40 bg-white p-4">
+                <img :src="pairing.qr_png" alt="QR" class="h-56 w-56" />
+                <p class="text-xs text-muted-foreground text-center">{{ $t('accounts.pairingScanning', 'Waiting for scan…') }}</p>
+              </div>
+
+              <div class="flex items-center gap-2">
+                <Button size="sm" :disabled="!canWrite || pairingStarting || pairing?.status === 'qr'" @click="startPairing">
+                  <Loader2 v-if="pairingStarting" class="h-4 w-4 animate-spin mr-1" />
+                  <QrCode v-else class="h-4 w-4 mr-1" />
+                  {{ pairing?.status === 'qr' ? $t('accounts.pairingScanning', 'Waiting for scan…') : $t('accounts.pairingStart', 'Pair device') }}
+                </Button>
+              </div>
+            </template>
+          </div>
+        </template>
 
         <Separator />
 
@@ -443,7 +582,7 @@ onMounted(async () => {
             <Label class="text-xs">{{ $t('accounts.autoReadReceipt', 'Auto Read Receipt') }}</Label>
             <Switch :checked="form.auto_read_receipt" @update:checked="form.auto_read_receipt = $event" :disabled="!canWrite" />
           </div>
-          <div class="flex items-start justify-between gap-3">
+          <div v-if="!isMeow" class="flex items-start justify-between gap-3">
             <div class="space-y-0.5">
               <Label class="text-xs">{{ $t('accounts.businessCallingEnabled', 'Business Calling enabled') }}</Label>
               <p class="text-[11px] text-muted-foreground">
@@ -457,7 +596,7 @@ onMounted(async () => {
     </Card>
 
     <!-- Webhook Config Card -->
-    <Card v-if="!isNew">
+    <Card v-if="!isNew && !isMeow">
       <CardHeader class="pb-3">
         <CardTitle class="text-sm font-medium">{{ $t('accounts.webhookConfig', 'Webhook Configuration') }}</CardTitle>
       </CardHeader>
@@ -496,8 +635,8 @@ onMounted(async () => {
         :updated-by-name="account?.updated_by_name"
       />
 
-      <!-- Setup Guide -->
-      <Card>
+      <!-- Setup Guide (Meta Cloud API) -->
+      <Card v-if="!isMeow">
         <CardHeader class="pb-3">
           <CardTitle class="text-sm font-medium">{{ $t('accounts.setupGuide', 'Setup Guide') }}</CardTitle>
         </CardHeader>
@@ -509,6 +648,19 @@ onMounted(async () => {
             <li>{{ $t('accounts.setupStep4', 'Generate a permanent token from') }} <a href="https://business.facebook.com/settings/system-users" target="_blank" class="text-primary hover:underline">Business Settings</a></li>
             <li>{{ $t('accounts.setupStep5', 'Configure the webhook URL and verify token in Meta dashboard') }}</li>
             <li>{{ $t('accounts.setupStep6', 'Click Test Connection to verify') }}</li>
+          </ol>
+        </CardContent>
+      </Card>
+      <Card v-else>
+        <CardHeader class="pb-3">
+          <CardTitle class="text-sm font-medium">{{ $t('accounts.setupGuide', 'Setup Guide') }}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ol class="list-decimal list-inside space-y-2.5 text-sm text-muted-foreground">
+            <li>{{ $t('accounts.meowSetupStep1', 'Save the account with a name') }}</li>
+            <li>{{ $t('accounts.meowSetupStep2', 'Click "Pair device" and scan the QR code with your phone (WhatsApp → Settings → Linked devices)') }}</li>
+            <li>{{ $t('accounts.meowSetupStep3', 'Wait for the Connected badge') }}</li>
+            <li>{{ $t('accounts.whatsmeowWarning', 'Unofficial connection: linking WhatsApp this way may lead to your number being banned. Use at your own risk.') }}</li>
           </ol>
         </CardContent>
       </Card>

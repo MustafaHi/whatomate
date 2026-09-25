@@ -21,6 +21,7 @@ import (
 // AccountRequest represents the request body for creating/updating an account
 type AccountRequest struct {
 	Name                   string `json:"name" validate:"required"`
+	Provider               string `json:"provider"` // "meta" (default) or "whatsmeow"
 	AppID                  string `json:"app_id"`
 	PhoneID                string `json:"phone_id" validate:"required"`
 	BusinessID             string `json:"business_id" validate:"required"`
@@ -38,6 +39,7 @@ type AccountRequest struct {
 type AccountResponse struct {
 	ID                     uuid.UUID  `json:"id"`
 	Name                   string     `json:"name"`
+	Provider               string     `json:"provider"`
 	AppID                  string     `json:"app_id"`
 	PhoneID                string     `json:"phone_id"`
 	BusinessID             string     `json:"business_id"`
@@ -96,8 +98,21 @@ func (a *App) CreateAccount(r *fastglue.Request) error {
 		return nil
 	}
 
-	// Validate required fields
-	if req.Name == "" || req.PhoneID == "" || req.BusinessID == "" || req.AccessToken == "" {
+	// Normalize provider; empty means Meta Cloud API
+	if req.Provider == "" {
+		req.Provider = whatsapp.ProviderMeta
+	}
+	if req.Provider != whatsapp.ProviderMeta && req.Provider != whatsapp.ProviderWhatsmeow {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Unknown provider. Supported: meta, whatsmeow", nil, "")
+	}
+
+	// Validate required fields — whatsmeow accounts are created empty and get
+	// their identity from the QR pairing step, so only a name is required.
+	if req.Provider == whatsapp.ProviderWhatsmeow {
+		if req.Name == "" {
+			return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Name is required", nil, "")
+		}
+	} else if req.Name == "" || req.PhoneID == "" || req.BusinessID == "" || req.AccessToken == "" {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Name, phone_id, business_id, and access_token are required", nil, "")
 	}
 
@@ -116,6 +131,7 @@ func (a *App) CreateAccount(r *fastglue.Request) error {
 	account := models.WhatsAppAccount{
 		OrganizationID:         orgID,
 		Name:                   req.Name,
+		Provider:               req.Provider,
 		AppID:                  req.AppID,
 		PhoneID:                req.PhoneID,
 		BusinessID:             req.BusinessID,
@@ -204,6 +220,11 @@ func (a *App) UpdateAccount(r *fastglue.Request) error {
 	var req AccountRequest
 	if err := a.decodeRequest(r, &req); err != nil {
 		return nil
+	}
+
+	// Provider is fixed at creation — switching means creating a new account.
+	if req.Provider != "" && req.Provider != account.Provider {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Provider cannot be changed on an existing account. Create a new account instead.", nil, "")
 	}
 
 	// Update fields if provided
@@ -308,6 +329,11 @@ func (a *App) DeleteAccount(r *fastglue.Request) error {
 		return nil
 	}
 
+	// Tear down the whatsmeow session before the row disappears
+	if account.Provider == whatsapp.ProviderWhatsmeow && a.Meow != nil {
+		a.Meow.Forget(account)
+	}
+
 	if err := a.DB.Delete(account).Error; err != nil {
 		a.Log.Error("Failed to delete account", "error", err)
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to delete account", nil, "")
@@ -338,6 +364,17 @@ func (a *App) TestAccountConnection(r *fastglue.Request) error {
 	account, err := a.resolveWhatsAppAccountByID(r, id, orgID)
 	if err != nil {
 		return nil
+	}
+
+	// whatsmeow accounts don't validate against Meta — report connection state.
+	if account.Provider == whatsapp.ProviderWhatsmeow {
+		connected := a.Meow != nil && a.Meow.IsConnected(account)
+		return r.SendEnvelope(map[string]any{
+			"success":              connected,
+			"display_phone_number": account.PhoneID,
+			"verified_name":        account.Name,
+			"error":                map[bool]string{true: "", false: "not connected — scan the pairing QR code"}[connected],
+		})
 	}
 
 	// Use the comprehensive validation function
@@ -456,6 +493,7 @@ func accountToResponse(acc models.WhatsAppAccount) AccountResponse {
 	resp := AccountResponse{
 		ID:                     acc.ID,
 		Name:                   acc.Name,
+		Provider:               acc.Provider,
 		AppID:                  acc.AppID,
 		PhoneID:                acc.PhoneID,
 		BusinessID:             acc.BusinessID,
@@ -514,6 +552,9 @@ func (a *App) SubscribeApp(r *fastglue.Request) error {
 
 	account, err := a.resolveWhatsAppAccountByID(r, id, orgID)
 	if err != nil {
+		return nil
+	}
+	if err := a.requireMetaAccount(r, account); err != nil {
 		return nil
 	}
 
@@ -885,6 +926,9 @@ func (a *App) RegisterPhoneNumber(r *fastglue.Request) error {
 
 	account, err := a.resolveWhatsAppAccountByID(r, id, orgID)
 	if err != nil {
+		return nil
+	}
+	if err := a.requireMetaAccount(r, account); err != nil {
 		return nil
 	}
 

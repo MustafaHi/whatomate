@@ -337,9 +337,10 @@ func (a *App) DeleteTemplate(r *fastglue.Request) error {
 		return nil
 	}
 
-	// If template exists on Meta, delete it there too
+	// If template exists on Meta, delete it there too (Meta accounts only)
 	if template.MetaTemplateID != "" {
-		if account, err := a.resolveWhatsAppAccount(orgID, template.WhatsAppAccount); err == nil {
+		if account, err := a.resolveWhatsAppAccount(orgID, template.WhatsAppAccount); err == nil &&
+			(account.Provider == "" || account.Provider == whatsapp.ProviderMeta) {
 			// Delete from Meta API
 			go a.deleteTemplateFromMeta(account, template.Name)
 		}
@@ -391,6 +392,9 @@ func (a *App) SubmitTemplate(r *fastglue.Request) error {
 	account, err := a.resolveWhatsAppAccount(orgID, template.WhatsAppAccount)
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "WhatsApp account not found", nil, "")
+	}
+	if err := a.requireMetaAccount(r, account); err != nil {
+		return nil
 	}
 
 	// Check if this is an update to an existing template on Meta
@@ -477,6 +481,9 @@ func (a *App) SyncTemplates(r *fastglue.Request) error {
 	account, err := a.resolveWhatsAppAccount(orgID, accountName)
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "WhatsApp account not found", nil, "")
+	}
+	if err := a.requireMetaAccount(r, account); err != nil {
+		return nil
 	}
 
 	// Fetch templates from Meta API
@@ -661,6 +668,9 @@ func (a *App) UploadTemplateMedia(r *fastglue.Request) error {
 	account, err := a.resolveWhatsAppAccount(orgID, accountName)
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "WhatsApp account not found", nil, "")
+	}
+	if err := a.requireMetaAccount(r, account); err != nil {
+		return nil
 	}
 
 	// Check if account has app_id configured

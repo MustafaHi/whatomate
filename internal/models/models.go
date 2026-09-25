@@ -292,18 +292,25 @@ func (CustomAction) TableName() string {
 // WhatsAppAccount represents a WhatsApp Business Account
 type WhatsAppAccount struct {
 	BaseModel
-	OrganizationID     uuid.UUID `gorm:"type:uuid;index;not null" json:"organization_id"`
-	Name               string    `gorm:"size:100;uniqueIndex:idx_wa_org_name;not null" json:"name"` // Unique per org, used as reference
-	AppID              string    `gorm:"size:100" json:"app_id"`                                    // Meta App ID
-	PhoneID            string    `gorm:"size:100;not null" json:"phone_id"`
-	BusinessID         string    `gorm:"size:100;not null" json:"business_id"`
-	AccessToken        string    `gorm:"type:text;not null" json:"-"` // encrypted
-	AppSecret          string    `gorm:"size:255" json:"-"`           // Meta App Secret for webhook signature verification
-	WebhookVerifyToken string    `gorm:"size:255" json:"webhook_verify_token"`
-	APIVersion         string    `gorm:"size:20;default:'v21.0'" json:"api_version"`
-	IsDefaultIncoming  bool      `gorm:"default:false" json:"is_default_incoming"`
-	IsDefaultOutgoing  bool      `gorm:"default:false" json:"is_default_outgoing"`
-	AutoReadReceipt    bool      `gorm:"default:false" json:"auto_read_receipt"`
+	OrganizationID uuid.UUID `gorm:"type:uuid;index;not null" json:"organization_id"`
+	Name           string    `gorm:"size:100;uniqueIndex:idx_wa_org_name;not null" json:"name"` // Unique per org, used as reference
+	// Provider selects the messaging backend: "meta" (Cloud API, default) or
+	// "whatsmeow" (unofficial QR-linked multidevice session).
+	Provider string `gorm:"size:20;default:'meta'" json:"provider"`
+	// ProviderData holds provider-specific JSON (whatsmeow: {"device_id":N}).
+	// Not encrypted — it stores no secrets today; device keys live in the
+	// whatsmeow store tables. Encrypt here when a provider adds secrets.
+	ProviderData       string `gorm:"type:text" json:"-"`
+	AppID              string `gorm:"size:100" json:"app_id"` // Meta App ID
+	PhoneID            string `gorm:"size:100;not null" json:"phone_id"`
+	BusinessID         string `gorm:"size:100;not null" json:"business_id"`
+	AccessToken        string `gorm:"type:text;not null" json:"-"` // encrypted
+	AppSecret          string `gorm:"size:255" json:"-"`           // Meta App Secret for webhook signature verification
+	WebhookVerifyToken string `gorm:"size:255" json:"webhook_verify_token"`
+	APIVersion         string `gorm:"size:20;default:'v21.0'" json:"api_version"`
+	IsDefaultIncoming  bool   `gorm:"default:false" json:"is_default_incoming"`
+	IsDefaultOutgoing  bool   `gorm:"default:false" json:"is_default_outgoing"`
+	AutoReadReceipt    bool   `gorm:"default:false" json:"auto_read_receipt"`
 	// BusinessCallingEnabled gates outbound voice_call interactive buttons.
 	// Set to true only after Meta enrolls this number in the WhatsApp Business
 	// Calling API. Used by the canned-response editor to disable the Call
@@ -328,11 +335,13 @@ func (WhatsAppAccount) TableName() string {
 // ToWAAccount converts the model to the whatsapp client's Account type.
 func (a *WhatsAppAccount) ToWAAccount() *whatsapp.Account {
 	return &whatsapp.Account{
-		PhoneID:     a.PhoneID,
-		BusinessID:  a.BusinessID,
-		AppID:       a.AppID,
-		APIVersion:  a.APIVersion,
-		AccessToken: a.AccessToken,
+		Provider:     a.Provider,
+		ProviderData: a.ProviderData,
+		PhoneID:      a.PhoneID,
+		BusinessID:   a.BusinessID,
+		AppID:        a.AppID,
+		APIVersion:   a.APIVersion,
+		AccessToken:  a.AccessToken,
 	}
 }
 

@@ -31,6 +31,9 @@ func (a *App) GetBusinessProfile(r *fastglue.Request) error {
 	if err != nil {
 		return nil
 	}
+	if err := a.requireMetaAccount(r, account); err != nil {
+		return nil
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), businessProfileHTTPTimeout)
 	defer cancel()
@@ -58,6 +61,9 @@ func (a *App) UpdateBusinessProfile(r *fastglue.Request) error {
 
 	account, err := a.resolveWhatsAppAccountByID(r, id, orgID)
 	if err != nil {
+		return nil
+	}
+	if err := a.requireMetaAccount(r, account); err != nil {
 		return nil
 	}
 
@@ -99,6 +105,9 @@ func (a *App) UpdateProfilePicture(r *fastglue.Request) error {
 
 	account, err := a.resolveWhatsAppAccountByID(r, id, orgID)
 	if err != nil {
+		return nil
+	}
+	if err := a.requireMetaAccount(r, account); err != nil {
 		return nil
 	}
 

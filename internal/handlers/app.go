@@ -11,6 +11,7 @@ import (
 	"github.com/shridarpatil/whatomate/internal/assignment"
 	"github.com/shridarpatil/whatomate/internal/calling"
 	"github.com/shridarpatil/whatomate/internal/config"
+	"github.com/shridarpatil/whatomate/internal/models"
 	"github.com/shridarpatil/whatomate/internal/queue"
 	"github.com/shridarpatil/whatomate/internal/storage"
 	"github.com/shridarpatil/whatomate/internal/tts"
@@ -24,11 +25,14 @@ import (
 
 // App holds all dependencies for handlers
 type App struct {
-	Config            *config.Config
-	DB                *gorm.DB
-	Redis             *redis.Client
-	Log               logf.Logger
-	WhatsApp          *whatsapp.Client
+	Config   *config.Config
+	DB       *gorm.DB
+	Redis    *redis.Client
+	Log      logf.Logger
+	WhatsApp *whatsapp.Client
+	// Meow resolves whatsmeow (QR-linked) accounts to Sender implementations.
+	// Nil until main.go wires it — senderFor falls back to the Meta client.
+	Meow              MeowResolver
 	WSHub             *websocket.Hub
 	Queue             queue.Queue
 	CampaignSubCancel context.CancelFunc
@@ -42,8 +46,59 @@ type App struct {
 	TTS *tts.PiperTTS
 	// S3Client for serving call recording presigned URLs (nil when not configured)
 	S3Client *storage.S3Client
+	// stagedMedia holds provider-pre-saved inbound media awaiting consumption
+	// by DownloadAndSaveMedia (see media.go).
+	stagedMediaMu sync.Mutex
+	stagedMedia   map[string]stagedMediaEntry
 	// wg tracks background goroutines for graceful shutdown
 	wg sync.WaitGroup
+}
+
+// MeowResolver hands out whatsapp.Sender implementations for whatsmeow
+// accounts. Defined as an interface so handlers don't import the whatsmeow
+// package (which would create an import cycle through the inbound callback).
+type MeowResolver interface {
+	SenderFor(account *whatsapp.Account) whatsapp.Sender
+	IsConnected(account *models.WhatsAppAccount) bool
+	Disconnect(account *models.WhatsAppAccount)
+	// OnDelete persists nothing but forgets the account's session state.
+	Forget(account *models.WhatsAppAccount)
+	StartPairing(account *models.WhatsAppAccount) error
+	PairingStatus(accountID uuid.UUID) (status, qrPNG, errMsg string)
+}
+
+// senderFor returns the messaging backend that handles this account.
+// Empty/unknown providers and nil resolvers fall back to the Meta client.
+func (a *App) senderFor(waAcct *whatsapp.Account) whatsapp.Sender {
+	if waAcct != nil && waAcct.Provider == whatsapp.ProviderWhatsmeow && a.Meow != nil {
+		return a.Meow.SenderFor(waAcct)
+	}
+	return a.WhatsApp
+}
+
+// SenderForModel is senderFor for a models.WhatsAppAccount (worker-facing).
+func (a *App) SenderForModel(account *models.WhatsAppAccount) whatsapp.Sender {
+	if account == nil {
+		return a.WhatsApp
+	}
+	return a.senderFor(account.ToWAAccount())
+}
+
+// SenderForWAAccount is senderFor for an already-converted whatsapp.Account.
+func (a *App) SenderForWAAccount(waAcct *whatsapp.Account) whatsapp.Sender {
+	return a.senderFor(waAcct)
+}
+
+// requireMetaAccount rejects accounts whose provider lacks Meta-only features
+// (flows, catalogs, analytics, calls, embedded signup, registration, ...).
+// Sends a 400 envelope and returns errEnvelopeSent on rejection.
+func (a *App) requireMetaAccount(r *fastglue.Request, account *models.WhatsAppAccount) error {
+	if account != nil && account.Provider != "" && account.Provider != whatsapp.ProviderMeta {
+		_ = r.SendErrorEnvelope(fasthttp.StatusBadRequest,
+			"Not supported for this account's provider ("+account.Provider+")", nil, "")
+		return errEnvelopeSent
+	}
+	return nil
 }
 
 // WaitForBackgroundTasks blocks until all background goroutines complete.

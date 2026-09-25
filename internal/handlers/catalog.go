@@ -115,6 +115,9 @@ func (a *App) CreateCatalog(r *fastglue.Request) error {
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "WhatsApp account not found", nil, "")
 	}
+	if err := a.requireMetaAccount(r, account); err != nil {
+		return nil
+	}
 
 	// Create catalog in Meta
 	ctx := context.Background()
@@ -192,6 +195,9 @@ func (a *App) DeleteCatalog(r *fastglue.Request) error {
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "WhatsApp account not found", nil, "")
 	}
+	if err := a.requireMetaAccount(r, account); err != nil {
+		return nil
+	}
 
 	// Delete from Meta
 	ctx := context.Background()
@@ -234,6 +240,9 @@ func (a *App) SyncCatalogs(r *fastglue.Request) error {
 	account, err := a.resolveWhatsAppAccount(orgID, req.WhatsAppAccount)
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "WhatsApp account not found", nil, "")
+	}
+	if err := a.requireMetaAccount(r, account); err != nil {
+		return nil
 	}
 
 	// Fetch catalogs from Meta
@@ -347,6 +356,9 @@ func (a *App) CreateCatalogProduct(r *fastglue.Request) error {
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "WhatsApp account not found", nil, "")
 	}
+	if err := a.requireMetaAccount(r, account); err != nil {
+		return nil
+	}
 
 	// Set defaults
 	if req.Currency == "" {
@@ -449,6 +461,9 @@ func (a *App) UpdateCatalogProduct(r *fastglue.Request) error {
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "WhatsApp account not found", nil, "")
 	}
+	if err := a.requireMetaAccount(r, account); err != nil {
+		return nil
+	}
 
 	// Update product in Meta
 	ctx := context.Background()
@@ -526,6 +541,9 @@ func (a *App) DeleteCatalogProduct(r *fastglue.Request) error {
 	account, err := a.resolveWhatsAppAccount(orgID, catalog.WhatsAppAccount)
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "WhatsApp account not found", nil, "")
+	}
+	if err := a.requireMetaAccount(r, account); err != nil {
+		return nil
 	}
 
 	// Delete from Meta

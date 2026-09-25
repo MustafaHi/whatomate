@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/shridarpatil/whatomate/internal/models"
@@ -91,6 +92,12 @@ func getExtensionFromMimeType(mimeType string) string {
 // DownloadAndSaveMedia downloads media from Meta and saves it locally
 // Returns the local file path (relative to media storage) or error
 func (a *App) DownloadAndSaveMedia(ctx context.Context, mediaID string, mimeType string, account *whatsapp.Account) (string, error) {
+	// Providers that deliver media bytes with the message itself (whatsmeow)
+	// pre-save the file and stage it under a synthetic media ID.
+	if path, ok := a.popStagedMedia(mediaID); ok {
+		return path, nil
+	}
+
 	// Get the media URL from Meta
 	mediaURL, err := a.WhatsApp.GetMediaURL(ctx, mediaID, account)
 	if err != nil {
@@ -143,10 +150,55 @@ func (a *App) DownloadAndSaveMedia(ctx context.Context, mediaID string, mimeType
 	return relativePath, nil
 }
 
+// stagedMediaTTL bounds how long a staged media entry lives. The consumer
+// (extractMessageContent → DownloadAndSaveMedia) runs in a goroutine spawned
+// immediately after the provider adapter stages the file, so entries normally
+// live milliseconds; the TTL only reaps entries for dropped duplicates.
+const stagedMediaTTL = 5 * time.Minute
+
+type stagedMediaEntry struct {
+	path      string
+	expiresAt time.Time
+}
+
+// StageMedia registers a media file that was already saved to local storage
+// under a synthetic media ID, so DownloadAndSaveMedia can return it without a
+// provider round-trip. Used by non-Meta providers whose messages carry media
+// bytes inline (whatsmeow) instead of media IDs.
+func (a *App) StageMedia(mediaID, localPath string) {
+	a.stagedMediaMu.Lock()
+	defer a.stagedMediaMu.Unlock()
+	if a.stagedMedia == nil {
+		a.stagedMedia = make(map[string]stagedMediaEntry)
+	}
+	// Lazy sweep of expired entries on insert.
+	now := time.Now()
+	for id, e := range a.stagedMedia {
+		if now.After(e.expiresAt) {
+			delete(a.stagedMedia, id)
+		}
+	}
+	a.stagedMedia[mediaID] = stagedMediaEntry{path: localPath, expiresAt: now.Add(stagedMediaTTL)}
+}
+
+// popStagedMedia consumes a staged media entry, if present.
+func (a *App) popStagedMedia(mediaID string) (string, bool) {
+	a.stagedMediaMu.Lock()
+	defer a.stagedMediaMu.Unlock()
+	entry, ok := a.stagedMedia[mediaID]
+	if !ok {
+		return "", false
+	}
+	delete(a.stagedMedia, mediaID)
+	if time.Now().After(entry.expiresAt) {
+		return "", false
+	}
+	return entry.path, true
+}
+
 // ServeMedia serves media files from local storage
 // Only authorized users who have access to the message can view the media
-func (a *App) ServeMedia(r *fastglue.Request) error {
-	// Get auth context
+func (a *App) ServeMedia(r *fastglue.Request) error { // Get auth context
 	orgID, userID, err := a.getOrgAndUserID(r)
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")

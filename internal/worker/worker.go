@@ -27,6 +27,9 @@ type Worker struct {
 	WhatsApp  *whatsapp.Client
 	Consumer  *queue.RedisConsumer
 	Publisher *queue.Publisher
+	// SenderFor resolves the messaging backend for an account (Meta client,
+	// whatsmeow bridge, ...). When nil, everything goes through WhatsApp.
+	SenderFor func(account *whatsapp.Account) whatsapp.Sender
 }
 
 // Ensure Worker implements JobHandler interface
@@ -299,7 +302,17 @@ func (w *Worker) sendTemplateMessage(ctx context.Context, account *models.WhatsA
 	components = append(components, flowComponents...)
 
 	rcpt := whatsapp.Recipient{Phone: recipient.PhoneNumber}
-	return w.WhatsApp.SendTemplateMessage(ctx, waAccount, rcpt, template.Name, template.Language, components)
+	return w.senderFor(waAccount).SendTemplateMessage(ctx, waAccount, rcpt, template.Name, template.Language, components)
+}
+
+// senderFor resolves the messaging backend for an account. Falls back to the
+// built-in Meta client when no multi-provider resolver was injected (e.g.
+// standalone worker process, which has no whatsmeow session manager).
+func (w *Worker) senderFor(account *whatsapp.Account) whatsapp.Sender {
+	if w.SenderFor != nil {
+		return w.SenderFor(account)
+	}
+	return w.WhatsApp
 }
 
 // decryptAccountSecrets decrypts the encrypted secrets on a WhatsApp account.

@@ -6,13 +6,17 @@ import (
 	"time"
 )
 
-// Account represents WhatsApp Business Account credentials
+// Account represents WhatsApp provider credentials and identity.
+// Provider selects the backend (ProviderMeta default, ProviderWhatsmeow);
+// ProviderData carries provider-specific JSON (e.g. whatsmeow device ID).
 type Account struct {
-	PhoneID     string
-	BusinessID  string
-	AppID       string
-	APIVersion  string
-	AccessToken string
+	Provider     string
+	ProviderData string
+	PhoneID      string
+	BusinessID   string
+	AppID        string
+	APIVersion   string
+	AccessToken  string
 }
 
 // Button represents an interactive button

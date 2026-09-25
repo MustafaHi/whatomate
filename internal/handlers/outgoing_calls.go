@@ -43,6 +43,9 @@ func (a *App) InitiateOutgoingCall(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "WhatsApp account not found", nil, "")
 	}
 	a.decryptAccountSecrets(&account)
+	if err := a.requireMetaAccount(r, &account); err != nil {
+		return nil
+	}
 
 	// Look up contact by ID
 	contactID, parseErr := uuid.Parse(req.ContactID)
@@ -143,6 +146,9 @@ func (a *App) SendCallPermissionRequest(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "WhatsApp account not found", nil, "")
 	}
 	a.decryptAccountSecrets(&account)
+	if err := a.requireMetaAccount(r, &account); err != nil {
+		return nil
+	}
 
 	waAccount := account.ToWAAccount()
 
@@ -235,6 +241,9 @@ func (a *App) GetCallPermission(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "WhatsApp account not found", nil, "")
 	}
 	a.decryptAccountSecrets(&account)
+	if err := a.requireMetaAccount(r, &account); err != nil {
+		return nil
+	}
 
 	status := "unknown"
 	// Calling is opt-in; do not query Meta for permissions on disabled accounts.

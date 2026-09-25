@@ -900,7 +900,7 @@ func (a *App) UploadCampaignMedia(r *fastglue.Request) error {
 	waAccount := a.toWhatsAppAccount(account)
 
 	ctx := r.RequestCtx
-	mediaID, err := a.WhatsApp.UploadMedia(ctx, waAccount, data, mimeType, fileHeader.Filename)
+	mediaID, err := a.senderFor(waAccount).UploadMedia(ctx, waAccount, data, mimeType, fileHeader.Filename)
 	if err != nil {
 		a.Log.Error("Failed to upload media to WhatsApp", "error", err)
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to upload media to WhatsApp", nil, "")
