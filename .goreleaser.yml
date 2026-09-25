@@ -53,8 +53,6 @@ dockers:
     goos: linux
     goarch: amd64
     image_templates:
-      - "{{ .Env.DOCKER_ORG }}/whatomate:{{ .Version }}-amd64"
-      - "{{ .Env.DOCKER_ORG }}/whatomate:latest-amd64"
       - "ghcr.io/{{ .Env.GITHUB_ORG }}/whatomate:{{ .Version }}-amd64"
       - "ghcr.io/{{ .Env.GITHUB_ORG }}/whatomate:latest-amd64"
     dockerfile: docker/Dockerfile.goreleaser
@@ -69,8 +67,6 @@ dockers:
     goos: linux
     goarch: arm64
     image_templates:
-      - "{{ .Env.DOCKER_ORG }}/whatomate:{{ .Version }}-arm64"
-      - "{{ .Env.DOCKER_ORG }}/whatomate:latest-arm64"
       - "ghcr.io/{{ .Env.GITHUB_ORG }}/whatomate:{{ .Version }}-arm64"
       - "ghcr.io/{{ .Env.GITHUB_ORG }}/whatomate:latest-arm64"
     dockerfile: docker/Dockerfile.goreleaser
@@ -82,16 +78,6 @@ dockers:
     use: buildx
 
 docker_manifests:
-  - name_template: "{{ .Env.DOCKER_ORG }}/whatomate:{{ .Version }}"
-    image_templates:
-      - "{{ .Env.DOCKER_ORG }}/whatomate:{{ .Version }}-amd64"
-      - "{{ .Env.DOCKER_ORG }}/whatomate:{{ .Version }}-arm64"
-
-  - name_template: "{{ .Env.DOCKER_ORG }}/whatomate:latest"
-    image_templates:
-      - "{{ .Env.DOCKER_ORG }}/whatomate:{{ .Version }}-amd64"
-      - "{{ .Env.DOCKER_ORG }}/whatomate:{{ .Version }}-arm64"
-
   - name_template: "ghcr.io/{{ .Env.GITHUB_ORG }}/whatomate:{{ .Version }}"
     image_templates:
       - "ghcr.io/{{ .Env.GITHUB_ORG }}/whatomate:{{ .Version }}-amd64"
@@ -103,9 +89,6 @@ docker_manifests:
       - "ghcr.io/{{ .Env.GITHUB_ORG }}/whatomate:{{ .Version }}-arm64"
 
 release:
-  github:
-    owner: shridarpatil
-    name: whatomate
   draft: false
   prerelease: auto
   name_template: "v{{ .Version }}"
