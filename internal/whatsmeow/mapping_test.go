@@ -90,7 +90,7 @@ func TestMapInbound_Media(t *testing.T) {
 	if msg == nil || msg.Type != "image" || msg.MimeType != "image/jpeg" || msg.Text != "a pic" {
 		t.Fatalf("unexpected mapping: %+v", msg)
 	}
-	if !isMediaPart(evt.Message) {
+	if mediaPart(evt.Message) == nil {
 		t.Error("image message should be recognized as media part")
 	}
 }

@@ -101,9 +101,9 @@ func (s *session) handleInbound(evt *events.Message) {
 	}
 	s.mu.Unlock()
 
-	if isMediaPart(evt.Message) {
+	if media := mediaPart(evt.Message); media != nil {
 		ctx, cancel := context.WithTimeout(s.mgr.ctx, 60*time.Second)
-		data, err := s.client.DownloadAny(ctx, evt.Message)
+		data, err := s.client.Download(ctx, media)
 		cancel()
 		if err != nil {
 			// Matches the Meta path: log and store the message without media.
@@ -116,10 +116,21 @@ func (s *session) handleInbound(evt *events.Message) {
 	s.mgr.onInbound(s.phoneID, *msg)
 }
 
-func isMediaPart(msg *waE2E.Message) bool {
-	return msg.GetImageMessage() != nil || msg.GetVideoMessage() != nil ||
-		msg.GetAudioMessage() != nil || msg.GetDocumentMessage() != nil ||
-		msg.GetStickerMessage() != nil
+// mediaPart returns the downloadable attachment of the message, nil if none.
+func mediaPart(msg *waE2E.Message) wa.DownloadableMessage {
+	switch {
+	case msg.GetImageMessage() != nil:
+		return msg.GetImageMessage()
+	case msg.GetVideoMessage() != nil:
+		return msg.GetVideoMessage()
+	case msg.GetAudioMessage() != nil:
+		return msg.GetAudioMessage()
+	case msg.GetDocumentMessage() != nil:
+		return msg.GetDocumentMessage()
+	case msg.GetStickerMessage() != nil:
+		return msg.GetStickerMessage()
+	}
+	return nil
 }
 
 // ============================================================================
