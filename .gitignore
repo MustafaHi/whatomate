@@ -54,6 +54,8 @@ tmp/
 temp/
 uploads/
 audio/
+.kilo
+.zcode/
 
 # Test results
 test-results/
