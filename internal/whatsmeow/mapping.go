@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 )
@@ -53,14 +54,18 @@ func NormalizeDigits(s string) string {
 	return b.String()
 }
 
-// SenderPhone picks the phone-number JID for a message, preferring the
-// phone-number alternative when the chat is LID-addressed.
+// SenderPhone picks the phone-number digits for a message sender. Prefers the
+// phone-number alternative address when present; never returns LID digits —
+// a LID stored as a phone produces contacts that can't be messaged.
 // ponytail: best-effort LID handling; revisit if @lid-only contacts appear.
 func SenderPhone(info types.MessageInfo) string {
-	if info.AddressingMode == types.AddressingModeLID && !info.SenderAlt.IsEmpty() && info.SenderAlt.Server == types.DefaultUserServer {
+	if !info.SenderAlt.IsEmpty() && info.SenderAlt.Server == types.DefaultUserServer {
 		return NormalizeDigits(info.SenderAlt.User)
 	}
-	return NormalizeDigits(info.Sender.User)
+	if info.Sender.Server == types.DefaultUserServer {
+		return NormalizeDigits(info.Sender.User)
+	}
+	return ""
 }
 
 // MapInbound converts a whatsmeow message event into the neutral inbound
@@ -168,4 +173,37 @@ func MapReceipt(rt types.ReceiptType) string {
 	default:
 		return ""
 	}
+}
+
+// envelopeDepth caps envelope unwrapping; real-world messages nest at most
+// two deep (e.g. view-once inside ephemeral).
+const envelopeDepth = 4
+
+// UnwrapEnvelopes peels future-proof message envelopes (disappearing/ephemeral,
+// view-once, captioned documents) and returns the inner real message. The
+// argument is returned unchanged when it has no envelope.
+func UnwrapEnvelopes(msg *waE2E.Message) *waE2E.Message {
+	for range envelopeDepth {
+		inner := envelopeInner(msg)
+		if inner == nil {
+			return msg
+		}
+		msg = inner
+	}
+	return msg
+}
+
+func envelopeInner(msg *waE2E.Message) *waE2E.Message {
+	for _, w := range []*waE2E.FutureProofMessage{
+		msg.GetViewOnceMessage(),
+		msg.GetViewOnceMessageV2(),
+		msg.GetViewOnceMessageV2Extension(),
+		msg.GetEphemeralMessage(),
+		msg.GetDocumentWithCaptionMessage(),
+	} {
+		if w != nil && w.GetMessage() != nil {
+			return w.GetMessage()
+		}
+	}
+	return nil
 }

@@ -96,15 +96,24 @@ func (m *Manager) Start() error {
 	return nil
 }
 
-// Stop disconnects everything.
+// Stop disconnects everything. Connections are snapshotted under the lock and
+// torn down outside it — Disconnect does network I/O.
 func (m *Manager) Stop() {
 	m.cancel()
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	sessions := make([]*session, 0, len(m.sessions))
 	for _, s := range m.sessions {
+		sessions = append(sessions, s)
+	}
+	pairings := make([]*pairing, 0, len(m.pairings))
+	for _, p := range m.pairings {
+		pairings = append(pairings, p)
+	}
+	m.mu.Unlock()
+	for _, s := range sessions {
 		s.client.Disconnect()
 	}
-	for _, p := range m.pairings {
+	for _, p := range pairings {
 		p.cancel()
 	}
 }
@@ -133,7 +142,7 @@ func (m *Manager) connectStored(account *models.WhatsAppAccount) {
 		outbound:  make(map[string]outboundEntry),
 		recvIndex: make(map[string]recvEntry),
 	}
-	s.client.AddEventHandler(s.handleEvent)
+	s.client.AddEventHandler(s.dispatch)
 	if err := s.client.Connect(); err != nil {
 		m.Log.Error("Failed to connect whatsmeow session", "account", account.Name, "error", err)
 		return
@@ -226,7 +235,7 @@ func (m *Manager) runPairing(ctx context.Context, p *pairing, account *models.Wh
 			}
 			// connectStored registers on the restart path; the fresh-pair
 			// path must too, or inbound events are dispatched to nobody.
-			client.AddEventHandler(s.handleEvent)
+			client.AddEventHandler(s.dispatch)
 			m.mu.Lock()
 			m.sessions[account.ID] = s
 			m.mu.Unlock()
@@ -264,22 +273,27 @@ func (m *Manager) finishPairing(accountID uuid.UUID, p *pairing, status, qr stri
 }
 
 // PairingStatus returns the pairing status and the current QR code rendered as
-// a PNG data URL (empty when not in "qr" state).
+// a PNG data URL (empty when not in "qr" state). Fields are copied under the
+// lock — runPairing mutates them concurrently.
 func (m *Manager) PairingStatus(accountID uuid.UUID) (string, string, string) {
 	m.mu.Lock()
 	p, ok := m.pairings[accountID]
+	var status, qr, errMsg string
+	if ok {
+		status, qr, errMsg = p.status, p.qr, p.err
+	}
 	m.mu.Unlock()
 	if !ok {
 		return "", "", ""
 	}
 	qrPNG := ""
-	if p.status == "qr" && p.qr != "" {
-		png, err := qrcode.Encode(p.qr, qrcode.Medium, 256)
+	if status == "qr" && qr != "" {
+		png, err := qrcode.Encode(qr, qrcode.Medium, 256)
 		if err == nil {
 			qrPNG = "data:image/png;base64," + base64.StdEncoding.EncodeToString(png)
 		}
 	}
-	return p.status, qrPNG, p.err
+	return status, qrPNG, errMsg
 }
 
 // SenderFor resolves the Sender for an account value struct. Returns an

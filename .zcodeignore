@@ -1,0 +1,98 @@
+# Binaries
+/server
+/whatomate
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Config with secrets
+config.toml
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Go workspace file
+go.work
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.env.local
+frontend/.env.*.local
+
+# Playwright
+frontend/playwright-report/
+frontend/test-results/
+frontend/playwright/.cache/
+
+# Embedded frontend build (generated during build)
+internal/frontend/dist/*
+!internal/frontend/dist/.gitkeep
+
+# Logs
+*.log
+logs/
+
+# Temp files
+tmp/
+temp/
+uploads/
+audio/
+.kilo
+.zcode/
+.claude/
+.agents/
+.skills-lock.json
+
+# Test results
+test-results/
+
+# Docker 
+docker/.env
+
+# ===== ↑ 以上同步自 .gitignore（「从 .gitignore 同步」只重写以上部分）=====
+.git/
+.hg/
+.svn/
+node_modules/
+bower_components/
+jspm_packages/
+__pycache__/
+site-packages/
+venv/
+coverage/
+htmlcov/
+lcov-report/
+cmakefiles/
+cmake-build-*/
+bazel-*/
+pods/
+deriveddata/
+storybook-static/
+playwright-report/
+allure-results/
+allure-report/
+cdk.out/
+*.egg-info/
+*.dist-info/
+eggs/
+pip-wheel-metadata/
+wheels/
+# ----- ↑ 以上为 ZCode 默认排除规则（自定义规则请写在本行下方，不会被同步/恢复改动）-----
+# 自定义规则写在下方（本行提示可删除）

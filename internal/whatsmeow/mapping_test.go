@@ -168,6 +168,24 @@ func TestMapInbound_LIDSenderPrefersAlt(t *testing.T) {
 	}
 }
 
+func TestMapInbound_LIDOnlySenderDropped(t *testing.T) {
+	// A sender with no phone-number form must not be stored as a contact.
+	evt := &events.Message{
+		Info: types.MessageInfo{
+			MessageSource: types.MessageSource{
+				Chat:           types.NewJID("987654321", types.HiddenUserServer),
+				Sender:         types.NewJID("213730742792271", types.HiddenUserServer),
+				AddressingMode: types.AddressingModeLID,
+			},
+			ID: "MSGID1",
+		},
+		Message: &waE2E.Message{Conversation: proto.String("unresolvable")},
+	}
+	if msg := MapInbound(evt); msg != nil {
+		t.Errorf("LID-only sender should be dropped, got %+v", msg)
+	}
+}
+
 func TestMapReceipt(t *testing.T) {
 	if got := MapReceipt(types.ReceiptTypeDelivered); got != "delivered" {
 		t.Errorf("delivered receipt mapped to %q", got)
@@ -177,6 +195,60 @@ func TestMapReceipt(t *testing.T) {
 	}
 	if got := MapReceipt(types.ReceiptTypeSender); got != "" {
 		t.Errorf("sender receipt should be ignored, got %q", got)
+	}
+}
+
+func TestUnwrapEnvelopes(t *testing.T) {
+	if got := UnwrapEnvelopes(&waE2E.Message{Conversation: proto.String("plain")}); got.GetConversation() != "plain" {
+		t.Errorf("plain message altered: %+v", got)
+	}
+	if got := UnwrapEnvelopes(nil); got != nil {
+		t.Errorf("nil message altered: %+v", got)
+	}
+
+	disappearing := &waE2E.Message{
+		EphemeralMessage: &waE2E.FutureProofMessage{Message: &waE2E.Message{
+			Conversation: proto.String("vanishing text"),
+		}},
+	}
+	if got := UnwrapEnvelopes(disappearing); got.GetConversation() != "vanishing text" {
+		t.Errorf("disappearing message not unwrapped: %+v", got)
+	}
+
+	nested := &waE2E.Message{
+		EphemeralMessage: &waE2E.FutureProofMessage{Message: &waE2E.Message{
+			ViewOnceMessageV2: &waE2E.FutureProofMessage{Message: &waE2E.Message{
+				ImageMessage: &waE2E.ImageMessage{Caption: proto.String("view once")},
+			}},
+		}},
+	}
+	if got := UnwrapEnvelopes(nested); got.GetImageMessage() == nil {
+		t.Errorf("nested view-once image not unwrapped: %+v", got)
+	}
+
+	captionedDoc := &waE2E.Message{
+		DocumentWithCaptionMessage: &waE2E.FutureProofMessage{Message: &waE2E.Message{
+			DocumentMessage: &waE2E.DocumentMessage{FileName: proto.String("report.pdf")},
+		}},
+	}
+	if got := UnwrapEnvelopes(captionedDoc); got.GetDocumentMessage() == nil {
+		t.Errorf("captioned document not unwrapped: %+v", got)
+	}
+}
+
+func TestMapInbound_DisappearingText(t *testing.T) {
+	// handleInbound unwraps before mapping; verify the unwrapped event maps.
+	evt := &events.Message{
+		Info: info("15551112222", "15553334444", false, false),
+		Message: UnwrapEnvelopes(&waE2E.Message{
+			EphemeralMessage: &waE2E.FutureProofMessage{Message: &waE2E.Message{
+				Conversation: proto.String("will disappear"),
+			}},
+		}),
+	}
+	msg := MapInbound(evt)
+	if msg == nil || msg.Type != "text" || msg.Text != "will disappear" {
+		t.Errorf("disappearing text not mapped: %+v", msg)
 	}
 }
 

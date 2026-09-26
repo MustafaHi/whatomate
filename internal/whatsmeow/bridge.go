@@ -35,10 +35,16 @@ type session struct {
 	client    *wa.Client
 
 	mu        sync.Mutex
-	connected bool
 	outbound  map[string]outboundEntry // staged UploadMedia bytes, keyed by synthetic media ID
 	recvIndex map[string]recvEntry     // inbound message ID -> chat/sender for MarkRead
 	recvOrder []string                 // recvIndex insertion order for eviction
+}
+
+// dispatch runs each event on its own goroutine: whatsmeow invokes handlers
+// synchronously on its websocket read loop, so LID lookups and media downloads
+// here would stall receipts and later messages for the whole session.
+func (s *session) dispatch(evt any) {
+	go s.handleEvent(evt)
 }
 
 type outboundEntry struct {
@@ -76,26 +82,50 @@ func (s *session) handleEvent(evt any) {
 			s.mgr.onStatus(s.phoneID, StatusUpdate{MessageID: string(id), Status: status})
 		}
 	case *events.Connected:
-		s.mu.Lock()
-		s.connected = true
-		s.mu.Unlock()
 		s.mgr.Log.Info("whatsmeow session connected", "account_id", s.accountID, "phone", s.phoneID)
 	case *events.Disconnected:
-		s.mu.Lock()
-		s.connected = false
-		s.mu.Unlock()
 		s.mgr.Log.Warn("whatsmeow session disconnected", "account_id", s.accountID, "phone", s.phoneID)
+	case *events.UndecryptableMessage:
+		// ponytail: undecryptable messages are not retried by the pipeline —
+		// logged so "message never arrived" reports are diagnosable.
+		s.mgr.Log.Warn("whatsmeow undecryptable message dropped",
+			"account_id", s.accountID, "phone", s.phoneID, "message_id", e.Info.ID,
+			"unavailable", e.IsUnavailable, "unavailable_type", string(e.UnavailableType))
 	case *events.LoggedOut:
-		s.mu.Lock()
-		s.connected = false
-		s.mu.Unlock()
 		// ponytail: no automatic re-pair flow — the account shows as
 		// disconnected and the user re-pairs from the UI.
 		s.mgr.Log.Error("whatsmeow session logged out — re-pair required", "account_id", s.accountID, "phone", s.phoneID)
 	}
 }
 
+// handleInbound resolves LID senders, unwraps future-proof envelopes, then
+// maps and forwards the message.
 func (s *session) handleInbound(evt *events.Message) {
+	// LID-addressed senders must be resolved to their real phone number
+	// before mapping — otherwise the LID digits get stored as a contact
+	// phone and later sends fail with "no LID found ... from server".
+	// ponytail: if the mapping isn't known yet, the message is dropped;
+	// subsequent events populate the store and those resolve fine.
+	if !evt.Info.IsGroup && evt.Info.Sender.Server == types.HiddenUserServer {
+		ctx, cancel := context.WithTimeout(s.mgr.ctx, 10*time.Second)
+		pn, err := s.client.Store.LIDs.GetPNForLID(ctx, evt.Info.Sender)
+		cancel()
+		if err != nil || pn.IsEmpty() || pn.Server != types.DefaultUserServer {
+			s.mgr.Log.Warn("Dropping inbound message with unresolvable LID sender",
+				"lid", evt.Info.Sender.String(), "message_id", evt.Info.ID, "error", err)
+			return
+		}
+		evt.Info.Sender = pn
+		// Chat stays LID-addressed on purpose: read receipts must reference
+		// the chat the message actually arrived in (MarkRead sends `to: chat`
+		// and ignores the sender for 1:1 LID chats).
+	}
+
+	// Disappearing (ephemeral), view-once, and captioned-document messages
+	// arrive wrapped in a FutureProofMessage envelope; unwrap in place so
+	// mapping and media download both see the inner message.
+	evt.Message = UnwrapEnvelopes(evt.Message)
+
 	msg := MapInbound(evt)
 	if msg == nil {
 		return
