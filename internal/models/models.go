@@ -289,6 +289,29 @@ func (CustomAction) TableName() string {
 	return "custom_actions"
 }
 
+// CustomEndpoint is an org-defined inbound API endpoint that starts a
+// chatbot flow when invoked. Auth is the secret Token in the invoke URL
+// (POST /api/e/{token}) — a capability URL, stored plaintext like
+// Webhook.Secret and never exposed in JSON.
+type CustomEndpoint struct {
+	BaseModel
+	OrganizationID uuid.UUID  `gorm:"type:uuid;index;not null" json:"organization_id"`
+	Name           string     `gorm:"size:100;not null" json:"name"`
+	Token          string     `gorm:"size:64;uniqueIndex;not null" json:"-"`
+	AccountName    string     `gorm:"size:100;not null" json:"account_name"` // WhatsApp account, referenced by name
+	FlowID         uuid.UUID  `gorm:"type:uuid;index;not null" json:"flow_id"`
+	IsActive       bool       `gorm:"default:true" json:"is_active"`
+	LastUsedAt     *time.Time `json:"last_used_at,omitempty"`
+
+	// Relations
+	Organization *Organization `gorm:"foreignKey:OrganizationID" json:"organization,omitempty"`
+	Flow         *ChatbotFlow  `gorm:"foreignKey:FlowID" json:"flow,omitempty"`
+}
+
+func (CustomEndpoint) TableName() string {
+	return "custom_endpoints"
+}
+
 // WhatsAppAccount represents a WhatsApp Business Account
 type WhatsAppAccount struct {
 	BaseModel

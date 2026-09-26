@@ -21,7 +21,8 @@ import (
 // for milliseconds; the TTL only cleans up after failures.
 const outboundTTL = 5 * time.Minute
 
-// recvIndexMax bounds the recent-inbound index used for read receipts.
+// recvIndexMax bounds the recent-message index used for read receipts and
+// reply quotes.
 const recvIndexMax = 1000
 
 // session is one connected WhatsApp multidevice session. It implements
@@ -34,10 +35,10 @@ type session struct {
 	phoneID   string // own phone number digits
 	client    *wa.Client
 
-	mu        sync.Mutex
-	outbound  map[string]outboundEntry // staged UploadMedia bytes, keyed by synthetic media ID
-	recvIndex map[string]recvEntry     // inbound message ID -> chat/sender for MarkRead
-	recvOrder []string                 // recvIndex insertion order for eviction
+	mu          sync.Mutex
+	outbound    map[string]outboundEntry // staged UploadMedia bytes, keyed by synthetic media ID
+	recent      map[string]recentEntry   // recent inbound/outbound messages, for read receipts and reply quotes
+	recentOrder []string                 // recent insertion order for eviction
 }
 
 // dispatch runs each event on its own goroutine: whatsmeow invokes handlers
@@ -54,10 +55,14 @@ type outboundEntry struct {
 	at       time.Time
 }
 
-type recvEntry struct {
+// recentEntry remembers a message seen on this session. sender is the quoted
+// message's author as the chat addresses it (the original LID for LID chats);
+// msg is the inner proto, reused verbatim as the reply quote body.
+type recentEntry struct {
 	chat   types.JID
 	sender types.JID
-	at     time.Time
+	msg    *waE2E.Message
+	fromMe bool
 }
 
 // handleEvent is the whatsmeow event handler. Registered before Connect.
@@ -104,8 +109,9 @@ func (s *session) handleInbound(evt *events.Message) {
 	// LID-addressed senders must be resolved to their real phone number
 	// before mapping — otherwise the LID digits get stored as a contact
 	// phone and later sends fail with "no LID found ... from server".
-	// ponytail: if the mapping isn't known yet, the message is dropped;
-	// subsequent events populate the store and those resolve fine.
+	// The original JID is kept for reply quotes: the participant there must
+	// match how the chat addresses the quoted message's author.
+	origSender := evt.Info.Sender
 	if !evt.Info.IsGroup && evt.Info.Sender.Server == types.HiddenUserServer {
 		ctx, cancel := context.WithTimeout(s.mgr.ctx, 10*time.Second)
 		pn, err := s.client.Store.LIDs.GetPNForLID(ctx, evt.Info.Sender)
@@ -131,15 +137,13 @@ func (s *session) handleInbound(evt *events.Message) {
 		return
 	}
 
-	// Remember for read receipts (MarkMessageRead only gets the message ID).
-	s.mu.Lock()
-	s.recvIndex[msg.ID] = recvEntry{chat: evt.Info.Chat, sender: evt.Info.Sender, at: evt.Info.Timestamp}
-	s.recvOrder = append(s.recvOrder, msg.ID)
-	for len(s.recvOrder) > recvIndexMax {
-		delete(s.recvIndex, s.recvOrder[0])
-		s.recvOrder = s.recvOrder[1:]
-	}
-	s.mu.Unlock()
+	// Remember for read receipts and reply quotes (only the message ID is
+	// known at those seams).
+	s.remember(string(evt.Info.ID), recentEntry{
+		chat:   evt.Info.Chat,
+		sender: origSender,
+		msg:    evt.Message,
+	})
 
 	if media := mediaPart(evt.Message); media != nil {
 		ctx, cancel := context.WithTimeout(s.mgr.ctx, 60*time.Second)
@@ -213,6 +217,38 @@ func (unsupportedSender) DownloadMedia(_ context.Context, _ string, _ string) ([
 	return nil, whatsapp.ErrUnsupported
 }
 
+// remember indexes a message for later read receipts and reply quotes,
+// evicting the oldest beyond recvIndexMax.
+func (s *session) remember(id string, e recentEntry) {
+	s.mu.Lock()
+	s.recent[id] = e
+	s.recentOrder = append(s.recentOrder, id)
+	for len(s.recentOrder) > recvIndexMax {
+		delete(s.recent, s.recentOrder[0])
+		s.recentOrder = s.recentOrder[1:]
+	}
+	s.mu.Unlock()
+}
+
+// replyQuote resolves the ContextInfo participant and quoted body for a reply.
+// The participant must be the quoted message's author — the contact for
+// inbound messages, our own JID for self replies — or WhatsApp clients render
+// the quote against the wrong message. Unknown IDs (e.g. after a restart) fall
+// back to the contact with an empty body.
+func replyQuote(ref recentEntry, found bool, own, to types.JID) (string, *waE2E.Message) {
+	if !found {
+		return to.String(), &waE2E.Message{}
+	}
+	author := ref.sender
+	if ref.fromMe && !own.IsEmpty() {
+		author = own
+	}
+	// Participant is device-less: String() renders a :device suffix that
+	// official clients omit in reply quotes.
+	canonical := types.JID{User: author.User, Server: author.Server, Integrator: author.Integrator}
+	return canonical.String(), ref.msg
+}
+
 func (s *session) SendTextMessage(ctx context.Context, account *whatsapp.Account, rcpt whatsapp.Recipient, text string, replyToMsgID ...string) (string, error) {
 	to, err := s.recipientJID(rcpt)
 	if err != nil {
@@ -221,15 +257,21 @@ func (s *session) SendTextMessage(ctx context.Context, account *whatsapp.Account
 
 	var msg *waE2E.Message
 	if len(replyToMsgID) > 0 && replyToMsgID[0] != "" {
-		// ponytail: quoted body is unknown at this seam, so the reply carries
-		// only the stanza reference — WhatsApp still threads it in most clients.
+		s.mu.Lock()
+		ref, found := s.recent[replyToMsgID[0]]
+		s.mu.Unlock()
+		var own types.JID
+		if s.client.Store.ID != nil {
+			own = *s.client.Store.ID
+		}
+		participant, quoted := replyQuote(ref, found, own, to)
 		msg = &waE2E.Message{
 			ExtendedTextMessage: &waE2E.ExtendedTextMessage{
 				Text: proto.String(text),
 				ContextInfo: &waE2E.ContextInfo{
 					StanzaID:      proto.String(replyToMsgID[0]),
-					Participant:   proto.String(to.String()),
-					QuotedMessage: &waE2E.Message{Conversation: proto.String("")},
+					Participant:   proto.String(participant),
+					QuotedMessage: quoted,
 				},
 			},
 		}
@@ -335,6 +377,9 @@ func (s *session) send(ctx context.Context, to types.JID, msg *waE2E.Message) (s
 	if err != nil {
 		return "", err
 	}
+	// Index sent messages too: replies to them (self replies) must quote our
+	// own JID as participant and carry the sent body as the quote.
+	s.remember(string(resp.ID), recentEntry{chat: to, sender: to, msg: msg, fromMe: true})
 	return string(resp.ID), nil
 }
 
@@ -356,14 +401,15 @@ func (s *session) UploadMedia(_ context.Context, account *whatsapp.Account, data
 	return mediaID, nil
 }
 
-// MarkMessageRead sends a read receipt. The chat/sender JIDs come from the
-// inbound index — the Sender interface only carries the message ID.
+// MarkMessageRead sends a read receipt. The chat JID comes from the inbound
+// index — the Sender interface only carries the message ID. Own (outbound)
+// messages are never read-receipted.
 func (s *session) MarkMessageRead(ctx context.Context, account *whatsapp.Account, messageID string) error {
 	s.mu.Lock()
-	ref, ok := s.recvIndex[messageID]
+	ref, ok := s.recent[messageID]
 	s.mu.Unlock()
-	if !ok {
-		// Never seen inbound here (e.g. restart) — receipt is best-effort.
+	if !ok || ref.fromMe {
+		// Not seen inbound here (e.g. restart) — receipt is best-effort.
 		return nil
 	}
 	return s.client.MarkRead(ctx, []types.MessageID{types.MessageID(messageID)}, time.Now(), ref.chat, ref.sender)

@@ -140,7 +140,7 @@ func (m *Manager) connectStored(account *models.WhatsAppAccount) {
 		phoneID:   NormalizeDigits(jid.User),
 		client:    wa.NewClient(device, waLog.Stdout("whatsmeow", "INFO", false)),
 		outbound:  make(map[string]outboundEntry),
-		recvIndex: make(map[string]recvEntry),
+		recent:    make(map[string]recentEntry),
 	}
 	s.client.AddEventHandler(s.dispatch)
 	if err := s.client.Connect(); err != nil {
@@ -231,7 +231,7 @@ func (m *Manager) runPairing(ctx context.Context, p *pairing, account *models.Wh
 				phoneID:   phone,
 				client:    client,
 				outbound:  make(map[string]outboundEntry),
-				recvIndex: make(map[string]recvEntry),
+				recent:    make(map[string]recentEntry),
 			}
 			// connectStored registers on the restart path; the fresh-pair
 			// path must too, or inbound events are dispatched to nobody.

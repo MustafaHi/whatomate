@@ -553,6 +553,10 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 		if len(path) >= 28 && path[:28] == "/api/custom-actions/redirect" {
 			return r
 		}
+		// Skip auth for custom endpoint invokes (secret token in path)
+		if len(path) > 7 && path[:7] == "/api/e/" {
+			return r
+		}
 		// Apply auth for all other /api routes (supports both JWT and API key)
 		if len(path) > 4 && path[:4] == "/api" {
 			return middleware.AuthWithDB(app.Config.JWT.Secret, app.DB)(r)
@@ -846,6 +850,13 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 	g.DELETE("/api/custom-actions/{id}", app.DeleteCustomAction)
 	g.POST("/api/custom-actions/{id}/execute", app.ExecuteCustomAction)
 	g.GET("/api/custom-actions/redirect/{token}", app.CustomActionRedirect)
+
+	// Custom API endpoints (inbound triggers for chatbot flows)
+	g.GET("/api/custom-endpoints", app.ListCustomEndpoints)
+	g.POST("/api/custom-endpoints", app.CreateCustomEndpoint)
+	g.PUT("/api/custom-endpoints/{id}", app.UpdateCustomEndpoint)
+	g.DELETE("/api/custom-endpoints/{id}", app.DeleteCustomEndpoint)
+	g.POST("/api/e/{token}", app.InvokeCustomEndpoint) // public; token in path is the credential
 
 	// IVR Flows
 	g.GET("/api/ivr-flows", app.ListIVRFlows)
