@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -29,6 +30,7 @@ type ChatbotSettingsResponse struct {
 	AIEnabled                    bool              `json:"ai_enabled"`
 	AIProvider                   models.AIProvider `json:"ai_provider"`
 	AIModel                      string            `json:"ai_model"`
+	AIBaseURL                    string            `json:"ai_base_url"`
 	AIMaxTokens                  int               `json:"ai_max_tokens"`
 	AISystemPrompt               string            `json:"ai_system_prompt"`
 	// SLA Settings
@@ -174,6 +176,7 @@ func (a *App) GetChatbotSettings(r *fastglue.Request) error {
 		AIEnabled:      settings.AI.Enabled,
 		AIProvider:     settings.AI.Provider,
 		AIModel:        settings.AI.Model,
+		AIBaseURL:      settings.AI.BaseURL,
 		AIMaxTokens:    settings.AI.MaxTokens,
 		AISystemPrompt: settings.AI.SystemPrompt,
 		// SLA Settings
@@ -259,6 +262,7 @@ func chatbotAISnapshot(s *models.ChatbotSettings) map[string]any {
 		"ai_enabled":       s.AI.Enabled,
 		"ai_provider":      s.AI.Provider,
 		"ai_model":         s.AI.Model,
+		"ai_base_url":      s.AI.BaseURL,
 		"ai_max_tokens":    s.AI.MaxTokens,
 		"ai_system_prompt": s.AI.SystemPrompt,
 	}
@@ -288,6 +292,7 @@ func (a *App) UpdateChatbotSettings(r *fastglue.Request) error {
 		AIProvider                   *models.AIProvider `json:"ai_provider"`
 		AIAPIKey                     *string            `json:"ai_api_key"`
 		AIModel                      *string            `json:"ai_model"`
+		AIBaseURL                    *string            `json:"ai_base_url"`
 		AIMaxTokens                  *int               `json:"ai_max_tokens"`
 		AISystemPrompt               *string            `json:"ai_system_prompt"`
 		// SLA Settings
@@ -367,7 +372,7 @@ func (a *App) UpdateChatbotSettings(r *fastglue.Request) error {
 		req.ClientReminderMessage != nil || req.ClientAutoCloseMinutes != nil ||
 		req.ClientAutoCloseMessage != nil
 	aiTouched := req.AIEnabled != nil || req.AIProvider != nil || req.AIAPIKey != nil ||
-		req.AIModel != nil || req.AIMaxTokens != nil || req.AISystemPrompt != nil
+		req.AIModel != nil || req.AIBaseURL != nil || req.AIMaxTokens != nil || req.AISystemPrompt != nil
 
 	// Update fields if provided
 	if req.Enabled != nil {
@@ -437,6 +442,9 @@ func (a *App) UpdateChatbotSettings(r *fastglue.Request) error {
 	}
 	if req.AIModel != nil {
 		settings.AI.Model = *req.AIModel
+	}
+	if req.AIBaseURL != nil {
+		settings.AI.BaseURL = strings.TrimRight(*req.AIBaseURL, "/")
 	}
 	if req.AIMaxTokens != nil {
 		settings.AI.MaxTokens = *req.AIMaxTokens

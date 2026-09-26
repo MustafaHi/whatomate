@@ -1041,6 +1041,40 @@ func TestRunChatGraph_AIResponse_MissingAPIKeyFallsThrough(t *testing.T) {
 	assert.Equal(t, models.SessionStatusCompleted, session.Status)
 }
 
+// TestRunChatGraph_AIResponse_CustomProvider: custom (OpenAI-compatible)
+// provider runs keyless — base URL gains /chat/completions, no auth header
+// is sent, and the answer flows through to the chat.
+func TestRunChatGraph_AIResponse_CustomProvider(t *testing.T) {
+	var gotAuth string
+	var gotPath string
+	aiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotPath = r.URL.Path
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{"message": map[string]string{"content": "hello from custom"}},
+			},
+		})
+	}))
+	t.Cleanup(aiServer.Close)
+
+	app, org, account, contact, session := newGraphTestFixtures(t)
+	createChatbotSettings(t, app, org.ID, account.Name, models.AIConfig{
+		Enabled:  true,
+		Provider: models.AIProviderCustom,
+		BaseURL:  aiServer.URL, // no /v1 suffix, no API key
+		Model:    "test-model",
+	})
+	flow := newAIResponseFlow(t, app, org, account, "")
+
+	require.NoError(t, app.runChatGraph(account, contact, session, flow, "hi", "", nil))
+	require.NoError(t, app.DB.First(session, session.ID).Error)
+
+	assert.Equal(t, "/chat/completions", gotPath, "should append /chat/completions to the base URL")
+	assert.Empty(t, gotAuth, "keyless custom provider must not send an Authorization header")
+	assert.Equal(t, models.SessionStatusCompleted, session.Status)
+}
+
 // newTransferFlow builds a single-node graph (transfer) with caller-
 // supplied config. Transfer is terminal so no outgoing edges.
 func newTransferFlow(t *testing.T, app *App, org *models.Organization, account *models.WhatsAppAccount, cfg map[string]any) *models.ChatbotFlow {

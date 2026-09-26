@@ -364,7 +364,9 @@ func (a *App) processIncomingMessageFull(phoneNumberID string, msg IncomingTextM
 	}
 
 	// If no keyword matched, try AI response if enabled
-	if settings.AI.Enabled && settings.AI.Provider != "" && settings.AI.APIKey != "" {
+	// Custom (OpenAI-compatible) providers may run keyless (e.g. local Ollama).
+	if settings.AI.Enabled && settings.AI.Provider != "" &&
+		(settings.AI.APIKey != "" || settings.AI.Provider == models.AIProviderCustom) {
 		a.Log.Info("Attempting AI response", "provider", settings.AI.Provider, "model", settings.AI.Model)
 		aiResponse, err := a.generateAIResponse(settings, session, messageText)
 		if err != nil {
@@ -829,7 +831,9 @@ func (a *App) generateAIResponse(settings *models.ChatbotSettings, session *mode
 	contextData := a.buildAIContext(settings.OrganizationID, session, userMessage)
 
 	switch settings.AI.Provider {
-	case models.AIProviderOpenAI:
+	case models.AIProviderOpenAI, models.AIProviderCustom:
+		// Custom = OpenAI-compatible endpoint with a configurable base URL
+		// (Ollama, OpenRouter, vLLM, ...).
 		return a.generateOpenAIResponse(settings, session, userMessage, contextData)
 	case models.AIProviderAnthropic:
 		return a.generateAnthropicResponse(settings, session, userMessage, contextData)
@@ -936,6 +940,18 @@ func (a *App) fetchAPIContext(apiConfig models.JSONB, session *models.ChatbotSes
 // generateOpenAIResponse generates a response using OpenAI API
 func (a *App) generateOpenAIResponse(settings *models.ChatbotSettings, session *models.ChatbotSession, userMessage string, contextData string) (string, error) {
 	url := "https://api.openai.com/v1/chat/completions"
+	if settings.AI.Provider == models.AIProviderCustom {
+		if settings.AI.BaseURL == "" {
+			return "", fmt.Errorf("custom provider requires a base URL")
+		}
+		base := strings.TrimSuffix(settings.AI.BaseURL, "/")
+		// Accept either a base ("http://host:11434/v1") or a full completions URL.
+		if strings.HasSuffix(base, "/chat/completions") {
+			url = base
+		} else {
+			url = base + "/chat/completions"
+		}
+	}
 
 	// Build messages array
 	messages := []map[string]string{}
@@ -1000,7 +1016,10 @@ func (a *App) generateOpenAIResponse(settings *models.ChatbotSettings, session *
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+settings.AI.APIKey)
+	// Local runtimes like Ollama accept (and expect) no auth header.
+	if settings.AI.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+settings.AI.APIKey)
+	}
 
 	resp, err := a.HTTPClient.Do(req)
 	if err != nil {

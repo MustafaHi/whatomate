@@ -941,6 +941,32 @@ export const customActionsService = {
     api.post<ActionResult>(`/custom-actions/${id}/execute`, { contact_id: contactId })
 }
 
+// Custom API endpoints (inbound triggers for chatbot flows)
+export interface CustomEndpoint {
+  id: string
+  name: string
+  account_name: string
+  flow_id: string
+  flow_name?: string
+  is_active: boolean
+  last_used_at?: string | null
+  created_at: string
+}
+
+export interface CustomEndpointCreated extends CustomEndpoint {
+  token: string
+  invoke_url: string // path only; prepend window origin
+}
+
+export const customEndpointsService = {
+  list: () => api.get<{ custom_endpoints: CustomEndpoint[] }>('/custom-endpoints'),
+  create: (data: { name: string; account_name: string; flow_id: string }) =>
+    api.post<CustomEndpointCreated>('/custom-endpoints', data),
+  update: (id: string, data: { name?: string; account_name?: string; flow_id?: string; is_active?: boolean }) =>
+    api.put<CustomEndpoint>(`/custom-endpoints/${id}`, data),
+  delete: (id: string) => api.delete(`/custom-endpoints/${id}`)
+}
+
 // Roles and Permissions
 export interface Permission {
   id: string

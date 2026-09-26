@@ -100,6 +100,7 @@ const aiSettings = ref({
   ai_provider: '',
   ai_api_key: '',
   ai_model: '',
+  ai_base_url: '',
   ai_max_tokens: 500,
   ai_system_prompt: ''
 })
@@ -109,8 +110,11 @@ const isAIEnabled = ref(false)
 const aiProviders = [
   { value: 'openai', label: 'OpenAI', models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'] },
   { value: 'anthropic', label: 'Anthropic', models: ['claude-3-5-sonnet-latest', 'claude-3-5-haiku-latest', 'claude-3-opus-latest'] },
-  { value: 'google', label: 'Google AI', models: ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash', 'gemini-1.5-flash-8b'] }
+  { value: 'google', label: 'Google AI', models: ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash', 'gemini-1.5-flash-8b'] },
+  { value: 'custom', label: 'Custom (OpenAI-compatible)', models: [] }
 ]
+
+const isCustomProvider = computed(() => aiSettings.value.ai_provider === 'custom')
 
 const availableModels = computed(() => {
   const provider = aiProviders.find(p => p.value === aiSettings.value.ai_provider)
@@ -208,6 +212,7 @@ onMounted(async () => {
         ai_provider: chatbotData.settings.ai_provider || '',
         ai_api_key: '',
         ai_model: chatbotData.settings.ai_model || '',
+        ai_base_url: chatbotData.settings.ai_base_url || '',
         ai_max_tokens: chatbotData.settings.ai_max_tokens || 500,
         ai_system_prompt: chatbotData.settings.ai_system_prompt || ''
       }
@@ -306,12 +311,17 @@ async function saveBusinessHoursSettings() {
 }
 
 async function saveAISettings() {
+  if (isCustomProvider.value && !aiSettings.value.ai_base_url.trim()) {
+    toast.error(t('chatbotSettings.aiBaseUrlRequired'))
+    return
+  }
   isSubmitting.value = true
   try {
     const payload: any = {
       ai_enabled: aiSettings.value.ai_enabled,
       ai_provider: aiSettings.value.ai_provider,
       ai_model: aiSettings.value.ai_model,
+      ai_base_url: aiSettings.value.ai_base_url,
       ai_max_tokens: aiSettings.value.ai_max_tokens,
       ai_system_prompt: aiSettings.value.ai_system_prompt
     }
@@ -840,7 +850,12 @@ function removeEscalationUser(userId: string) {
                     </div>
                     <div class="space-y-2">
                       <Label>{{ $t('chatbotSettings.model') }}</Label>
-                      <Select v-model="aiSettings.ai_model" :disabled="!aiSettings.ai_provider">
+                      <Input
+                        v-if="isCustomProvider"
+                        v-model="aiSettings.ai_model"
+                        :placeholder="$t('chatbotSettings.modelPlaceholder') + '...'"
+                      />
+                      <Select v-else v-model="aiSettings.ai_model" :disabled="!aiSettings.ai_provider">
                         <SelectTrigger>
                           <SelectValue :placeholder="$t('chatbotSettings.selectModel') + '...'" />
                         </SelectTrigger>
@@ -851,6 +866,15 @@ function removeEscalationUser(userId: string) {
                         </SelectContent>
                       </Select>
                     </div>
+                  </div>
+
+                  <div v-if="isCustomProvider" class="space-y-2">
+                    <Label>{{ $t('chatbotSettings.aiBaseUrl') }}</Label>
+                    <Input
+                      v-model="aiSettings.ai_base_url"
+                      :placeholder="$t('chatbotSettings.aiBaseUrlPlaceholder')"
+                    />
+                    <p class="text-xs text-muted-foreground">{{ $t('chatbotSettings.aiBaseUrlHint') }}</p>
                   </div>
 
                   <div class="space-y-2">

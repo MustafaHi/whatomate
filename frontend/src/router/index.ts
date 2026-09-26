@@ -288,6 +288,12 @@ const router = createRouter({
           meta: { permission: 'custom_actions' }
         },
         {
+          path: 'settings/custom-endpoints',
+          name: 'custom-endpoints',
+          component: () => import('@/views/settings/CustomEndpointsView.vue'),
+          meta: { permission: 'flows.chatbot' }
+        },
+        {
           path: 'settings/audit-logs',
           name: 'audit-logs',
           component: () => import('@/views/settings/AuditLogsView.vue'),
@@ -372,6 +378,7 @@ const navigationOrder = [
     { path: '/settings/api-keys', permission: 'api_keys' },
     { path: '/settings/webhooks', permission: 'webhooks' },
     { path: '/settings/custom-actions', permission: 'custom_actions' },
+    { path: '/settings/custom-endpoints', permission: 'flows.chatbot' },
     { path: '/settings/sso', permission: 'settings.sso' }
   ]}
 ]

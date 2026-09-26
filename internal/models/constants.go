@@ -61,6 +61,9 @@ const (
 	AIProviderOpenAI    AIProvider = "openai"
 	AIProviderAnthropic AIProvider = "anthropic"
 	AIProviderGoogle    AIProvider = "google"
+	// AIProviderCustom is any OpenAI-compatible chat-completions endpoint
+	// (Ollama, OpenRouter, vLLM, ...): AIConfig.BaseURL + AIConfig.Model.
+	AIProviderCustom AIProvider = "custom"
 )
 
 // MatchType represents keyword matching strategies
